@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+coverage/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Generated Prisma client and local databases
+src/generated/
+prisma/*.db
+prisma/*.db-*
+
+# Tooling
+.DS_Store
+*.log
+*.tsbuildinfo
+.vercel/
+.turbo/
+
+# Credentials and certificates
+*.pem
+*.key
+*.crt

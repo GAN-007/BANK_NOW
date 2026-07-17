@@ -1,0 +1,382 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CUSTOMER
+  SUPPORT
+  COMPLIANCE
+  FINANCE_ADMIN
+  PLATFORM_ADMIN
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  LOCKED
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  MANUAL_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum AccountKind {
+  WALLET
+  SAVINGS
+  CURRENT
+  CLEARING
+  SUSPENSE
+  FEE_REVENUE
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum LedgerAccountClass {
+  ASSET
+  LIABILITY
+  REVENUE
+  EXPENSE
+  EQUITY
+}
+
+enum EntryDirection {
+  DEBIT
+  CREDIT
+}
+
+enum JournalStatus {
+  PENDING
+  POSTED
+  REVERSED
+  FAILED
+}
+
+enum TransferStatus {
+  PENDING
+  POSTED
+  FAILED
+  REVERSED
+}
+
+enum PaymentMethod {
+  MPESA
+  BANK_TRANSFER
+  CARD
+  PAYPAL
+}
+
+enum PaymentIntentStatus {
+  CREATED
+  REQUIRES_ACTION
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  EXPIRED
+  MANUAL_REVIEW
+}
+
+enum Provider {
+  MPESA
+  STRIPE
+  PAYPAL
+  BANK_TRANSFER
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  REJECTED
+  FAILED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+model User {
+  id                    String                   @id @default(cuid())
+  email                 String                   @unique
+  phoneNumber           String?                  @unique
+  firstName             String
+  lastName              String
+  passwordHash          String
+  role                  UserRole                 @default(CUSTOMER)
+  status                UserStatus               @default(PENDING_VERIFICATION)
+  kycStatus             KycStatus                @default(NOT_STARTED)
+  emailVerifiedAt       DateTime?
+  lastLoginAt           DateTime?
+  failedLoginCount      Int                      @default(0)
+  lockedUntil           DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  accounts              Account[]
+  auditLogs             AuditLog[]               @relation("AuditActor")
+  emailVerification     EmailVerificationToken[]
+  kycProfile            KycProfile?
+  mfaChallenge          MfaChallenge[]
+  mfaFactor             MfaFactor?
+  mfaRecoveryCodes      MfaRecoveryCode[]
+  paymentIntents        PaymentIntent[]
+  passwordResetTokens   PasswordResetToken[]
+  sessions              Session[]
+  transfersInitiated    Transfer[]               @relation("TransferInitiator")
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  tokenHash      String    @unique
+  csrfTokenHash  String
+  ipHash         String?
+  userAgent      String?
+  createdAt      DateTime  @default(now())
+  lastUsedAt     DateTime  @default(now())
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt])
+}
+
+model EmailVerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model MfaFactor {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  encryptedSecret   String
+  confirmedAt       DateTime?
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MfaChallenge {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model MfaRecoveryCode {
+  id         String    @id @default(cuid())
+  userId     String
+  codeHash   String    @unique
+  createdAt  DateTime  @default(now())
+  usedAt     DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+}
+
+model KycProfile {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  provider            String?
+  encryptedReference  String?
+  status              KycStatus @default(NOT_STARTED)
+  submittedAt         DateTime?
+  reviewedAt          DateTime?
+  reviewedBy          String?
+  rejectionReason     String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                    String               @id @default(cuid())
+  userId                String?
+  accountNumber         String               @unique
+  displayName           String
+  currency              String               @default("KES")
+  kind                  AccountKind          @default(WALLET)
+  ledgerClass           LedgerAccountClass   @default(LIABILITY)
+  status                AccountStatus        @default(ACTIVE)
+  availableBalanceMinor BigInt               @default(0)
+  ledgerBalanceMinor    BigInt               @default(0)
+  isSystem              Boolean              @default(false)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  user                  User?                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  debitEntries          LedgerEntry[]        @relation("LedgerAccountEntries")
+  paymentIntents        PaymentIntent[]
+  receivedTransfers     Transfer[]           @relation("TransferDestination")
+  sentTransfers         Transfer[]           @relation("TransferSource")
+
+  @@index([userId, status])
+  @@index([currency, kind])
+}
+
+model Journal {
+  id                String          @id @default(cuid())
+  reference         String          @unique
+  status            JournalStatus   @default(PENDING)
+  narration         String
+  currency          String
+  externalReference String?         @unique
+  metadata          Json?
+  createdAt         DateTime        @default(now())
+  postedAt          DateTime?
+  reversedAt        DateTime?
+  entries           LedgerEntry[]
+  paymentIntent     PaymentIntent?
+  transfer          Transfer?
+
+  @@index([status, createdAt])
+}
+
+model LedgerEntry {
+  id                 String          @id @default(cuid())
+  journalId          String
+  accountId          String
+  direction          EntryDirection
+  amountMinor        BigInt
+  currency           String
+  balanceAfterMinor  BigInt?
+  createdAt          DateTime        @default(now())
+  account            Account         @relation("LedgerAccountEntries", fields: [accountId], references: [id], onDelete: Restrict)
+  journal            Journal         @relation(fields: [journalId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, createdAt])
+  @@index([journalId])
+}
+
+model Transfer {
+  id                   String          @id @default(cuid())
+  initiatorId          String
+  sourceAccountId      String
+  destinationAccountId String
+  journalId            String          @unique
+  idempotencyKey       String
+  amountMinor          BigInt
+  currency             String
+  memo                 String?
+  status               TransferStatus  @default(PENDING)
+  failureCode          String?
+  createdAt            DateTime        @default(now())
+  postedAt             DateTime?
+  reversedAt           DateTime?
+  destinationAccount   Account         @relation("TransferDestination", fields: [destinationAccountId], references: [id], onDelete: Restrict)
+  initiator            User            @relation("TransferInitiator", fields: [initiatorId], references: [id], onDelete: Restrict)
+  journal              Journal         @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  sourceAccount        Account         @relation("TransferSource", fields: [sourceAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([initiatorId, idempotencyKey])
+  @@index([sourceAccountId, createdAt])
+  @@index([destinationAccountId, createdAt])
+}
+
+model PaymentIntent {
+  id                String              @id @default(cuid())
+  userId            String
+  accountId         String
+  journalId         String?             @unique
+  provider          Provider
+  method            PaymentMethod
+  idempotencyKey    String
+  amountMinor       BigInt
+  currency          String
+  status            PaymentIntentStatus @default(CREATED)
+  providerReference String?             @unique
+  checkoutUrl       String?
+  metadata          Json?
+  failureCode       String?
+  expiresAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  account           Account             @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  journal           Journal?            @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  user              User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@index([provider, status])
+  @@index([accountId, createdAt])
+}
+
+model ProviderWebhook {
+  id                 String        @id @default(cuid())
+  provider           Provider
+  externalEventId    String
+  payloadHash        String
+  encryptedPayload   String?
+  signatureValid     Boolean
+  status             WebhookStatus @default(RECEIVED)
+  processingError    String?
+  receivedAt         DateTime      @default(now())
+  processedAt        DateTime?
+
+  @@unique([provider, externalEventId])
+  @@index([provider, status, receivedAt])
+}
+
+model AuditLog {
+  id          String       @id @default(cuid())
+  actorId     String?
+  action      String
+  resource    String
+  resourceId  String?
+  outcome     AuditOutcome
+  ipHash      String?
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+  actor       User?        @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([resource, resourceId])
+}
+
+model RateLimitBucket {
+  key        String   @id
+  count      Int      @default(0)
+  windowEnds DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([windowEnds])
+}

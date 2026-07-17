@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Bank Now</title>
+  <rect width="512" height="512" rx="112" fill="#083344"/>
+  <path d="M97 204 256 112l159 92v42H97v-42Zm35 70h248v121h31v42H101v-42h31V274Zm46 0v121h45V274h-45Zm111 0v121h45V274h-45Z" fill="#fef3c7"/>
+</svg>
