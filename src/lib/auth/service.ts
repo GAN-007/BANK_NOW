@@ -333,6 +333,10 @@ export async function resetPassword(input: {
       where: { userId: reset.userId, revokedAt: null },
       data: { revokedAt: now },
     });
+    await tx.mfaChallenge.updateMany({
+      where: { userId: reset.userId, consumedAt: null },
+      data: { consumedAt: now },
+    });
     await tx.auditLog.create({
       data: {
         actorId: reset.userId,
@@ -394,6 +398,14 @@ export async function beginLogin(input: {
     throw new AppError("INVALID_CREDENTIALS", "Invalid e-mail address or password.", 401);
   }
 
+  if (!user.emailVerifiedAt) {
+    throw new AppError(
+      "EMAIL_NOT_VERIFIED",
+      "Verify your e-mail address before signing in.",
+      403,
+    );
+  }
+
   if (user.status === "SUSPENDED") {
     throw new AppError("ACCOUNT_SUSPENDED", "This account has been suspended. Contact support.", 403);
   }
@@ -445,6 +457,8 @@ export async function completeMfaLogin(input: {
         select: {
           id: true,
           email: true,
+          status: true,
+          emailVerifiedAt: true,
         },
       },
     },
@@ -452,6 +466,10 @@ export async function completeMfaLogin(input: {
 
   if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date()) {
     throw new AppError("INVALID_MFA_CHALLENGE", "This sign-in challenge is invalid or has expired.", 401);
+  }
+
+  if (challenge.user.status !== "ACTIVE" || !challenge.user.emailVerifiedAt) {
+    throw new AppError("ACCOUNT_RESTRICTED", "This account is not eligible to sign in.", 403);
   }
 
   await verifyMfaFactor({
