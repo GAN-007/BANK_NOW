@@ -17,10 +17,8 @@ export function getDb(): PrismaClient {
   });
 
   const client = new PrismaClient({ adapter });
-
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
-  }
-
-  return client;
+  // One pool per Node.js runtime prevents a new PostgreSQL connection pool
+  // from being created for every request in a long-lived production process.
+  globalForPrisma.prisma = client;
+  return globalForPrisma.prisma;
 }
