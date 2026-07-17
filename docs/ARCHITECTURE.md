@@ -8,7 +8,7 @@ flowchart TD
   App --> Auth["Auth and RBAC"]
   App --> Ledger["PostgreSQL ledger"]
   App --> Providers["M-Pesa / Stripe / PayPal / Bank"]
-  Providers --> Webhooks["Signed webhook handlers"]
+  Providers --> Webhooks["Authenticated callback handlers"]
   Webhooks --> Ledger
   Finance["Finance / Compliance roles"] --> App
 ```
@@ -28,7 +28,7 @@ The browser receives only presentation data and an HTTP-only opaque session cook
 
 1. A verified, KYC-approved customer creates an idempotent `PaymentIntent`.
 2. BANK NOW requests an M-Pesa prompt, a Stripe Checkout Session, a PayPal Order, or presents partner bank-transfer instructions.
-3. Redirect completion only confirms customer intent. The signed provider webhook (or finance-admin reconciliation for bank transfer) validates provider reference, currency, and amount.
+3. Redirect completion only confirms customer intent. The authenticated provider callback (or finance-admin reconciliation for bank transfer) validates provider reference, currency, and amount.
 4. The ledger posts the credit exactly once, marks the `PaymentIntent` successful, and records an audit event.
 
 Webhook events are persisted with a provider/event unique constraint before processing. Raw payloads are encrypted at rest; duplicates return success without creating another journal.
