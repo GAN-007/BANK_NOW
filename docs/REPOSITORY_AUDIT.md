@@ -90,4 +90,6 @@ These are not placeholders to fill with guessed code. They are controlled decisi
 
 ## Verification status
 
-Locally verified in the audit environment: clean install, Prisma generation, strict TypeScript, zero-warning ESLint, unit tests, production build, and an all-dependency audit with zero known vulnerabilities at the selected threshold. PostgreSQL and Docker binaries were unavailable locally. The committed CI database job is therefore the authoritative next check for migration SQL and database integration behavior; a green CI run still does not mean a production database was migrated.
+Locally verified in the audit environment: clean install, Prisma generation, strict TypeScript, zero-warning ESLint, 14 unit tests across eight files, production build, and an all-dependency audit with zero known vulnerabilities at the selected threshold. PostgreSQL and Docker binaries were unavailable locally.
+
+GitHub Actions run `29632528767` completed successfully for hardened commit `3300b08c39d01752bea3f6631540746472a4aad9`. Its quality job repeated install/generation/lint/type-check/unit/build/audit gates. Its database job deployed every migration to a disposable PostgreSQL 17 service, found no Prisma schema drift, and passed all eight database integration scenarios, including concurrency and trigger enforcement. This is migration/integration evidence for the reviewed commit in CI; it does not mean an undisclosed production database was migrated and does not satisfy any regulatory or partner gate.
