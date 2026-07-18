@@ -33,6 +33,37 @@ async function lockRows(
   await tx.$executeRawUnsafe(sql, ...identifiers);
 }
 
+const RETRYABLE_SQL_STATES = new Set(["40001", "40P01"]);
+
+function containsRetryableSqlState(
+  value: unknown,
+  visited: Set<object> = new Set(),
+): boolean {
+  if (typeof value === "string") {
+    return RETRYABLE_SQL_STATES.has(value);
+  }
+  if (typeof value !== "object" || value === null || visited.has(value)) {
+    return false;
+  }
+
+  visited.add(value);
+  return Object.values(value).some((entry) =>
+    containsRetryableSqlState(entry, visited),
+  );
+}
+
+export function isRetryableTransactionError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  return (
+    error.code === "P2034" ||
+    error.code === "P2002" ||
+    (error.code === "P2010" && containsRetryableSqlState(error.meta))
+  );
+}
+
 function sameTransferRequest(
   existing: {
     sourceAccountId: string;
@@ -61,20 +92,19 @@ function sameTransferRequest(
 async function serializableWithRetry<T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
-  const maximumAttempts = 3;
+  const maximumAttempts = 5;
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     try {
       return await getDb().$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
     } catch (error) {
-      const retryable =
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        (error.code === "P2034" || error.code === "P2002");
-      if (!retryable || attempt === maximumAttempts) {
+      if (!isRetryableTransactionError(error) || attempt === maximumAttempts) {
         throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, attempt * 20));
+      const backoffMilliseconds =
+        25 * 2 ** (attempt - 1) + Math.floor(Math.random() * 25);
+      await new Promise((resolve) => setTimeout(resolve, backoffMilliseconds));
     }
   }
   throw new Error("Serializable transaction retry loop terminated unexpectedly.");
