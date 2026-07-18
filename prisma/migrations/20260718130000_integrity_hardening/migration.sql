@@ -272,10 +272,12 @@ CREATE TRIGGER "PaymentIntent_validate_posted_journal"
   BEFORE INSERT OR UPDATE OF "status" ON "PaymentIntent"
   FOR EACH ROW EXECUTE FUNCTION bank_now_validate_posted_reference();
 
--- Financial identity is immutable even while operational status evolves.
-CREATE FUNCTION bank_now_protect_financial_identity() RETURNS trigger AS $$
+-- Financial identity is immutable even while operational status evolves. Keep
+-- table-specific functions because PostgreSQL resolves NEW/OLD record fields
+-- when each PL/pgSQL expression is planned.
+CREATE FUNCTION bank_now_protect_transfer_financial_identity() RETURNS trigger AS $$
 BEGIN
-  IF TG_TABLE_NAME = 'Transfer' AND (
+  IF
     NEW."initiatorId" IS DISTINCT FROM OLD."initiatorId" OR
     NEW."sourceAccountId" IS DISTINCT FROM OLD."sourceAccountId" OR
     NEW."destinationAccountId" IS DISTINCT FROM OLD."destinationAccountId" OR
@@ -283,11 +285,17 @@ BEGIN
     NEW."idempotencyKey" IS DISTINCT FROM OLD."idempotencyKey" OR
     NEW."amountMinor" IS DISTINCT FROM OLD."amountMinor" OR
     NEW."currency" IS DISTINCT FROM OLD."currency"
-  ) THEN
+  THEN
     RAISE EXCEPTION 'Transfer financial identity is immutable.' USING ERRCODE = '55000';
   END IF;
 
-  IF TG_TABLE_NAME = 'PaymentIntent' AND (
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION bank_now_protect_payment_financial_identity() RETURNS trigger AS $$
+BEGIN
+  IF
     NEW."userId" IS DISTINCT FROM OLD."userId" OR
     NEW."accountId" IS DISTINCT FROM OLD."accountId" OR
     NEW."provider" IS DISTINCT FROM OLD."provider" OR
@@ -298,7 +306,7 @@ BEGIN
     NEW."requestHash" IS DISTINCT FROM OLD."requestHash" OR
     (OLD."providerReference" IS NOT NULL AND NEW."providerReference" IS DISTINCT FROM OLD."providerReference") OR
     (OLD."settlementReference" IS NOT NULL AND NEW."settlementReference" IS DISTINCT FROM OLD."settlementReference")
-  ) THEN
+  THEN
     RAISE EXCEPTION 'Payment intent financial identity is immutable.' USING ERRCODE = '55000';
   END IF;
 
@@ -308,11 +316,11 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "Transfer_financial_identity_immutable"
   BEFORE UPDATE ON "Transfer"
-  FOR EACH ROW EXECUTE FUNCTION bank_now_protect_financial_identity();
+  FOR EACH ROW EXECUTE FUNCTION bank_now_protect_transfer_financial_identity();
 
 CREATE TRIGGER "PaymentIntent_financial_identity_immutable"
   BEFORE UPDATE ON "PaymentIntent"
-  FOR EACH ROW EXECUTE FUNCTION bank_now_protect_financial_identity();
+  FOR EACH ROW EXECUTE FUNCTION bank_now_protect_payment_financial_identity();
 
 CREATE FUNCTION bank_now_protect_settlement_review() RETURNS trigger AS $$
 BEGIN
