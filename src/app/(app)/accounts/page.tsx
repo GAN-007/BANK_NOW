@@ -12,6 +12,9 @@ export default async function AccountsPage() {
     return null;
   }
   const snapshot = await dashboardSnapshot(session.user.id);
+  const today = new Date();
+  const from = new Date(today.getTime() - 89 * 24 * 60 * 60 * 1000);
+  const dateValue = (date: Date) => date.toISOString().slice(0, 10);
 
   return (
     <div className="page-stack">
@@ -25,6 +28,32 @@ export default async function AccountsPage() {
       <div className="account-grid account-grid--wide">
         {snapshot.accounts.map((account) => <AccountCard account={account} key={account.id} />)}
       </div>
+      <section className="content-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Statements</h2>
+            <p>Download up to one year of posted ledger activity as a protected CSV export.</p>
+          </div>
+        </div>
+        <div className="button-row">
+          {snapshot.accounts.map((account) => (
+            <a
+              className="secondary-button"
+              href={
+                "/api/statements?accountId=" +
+                encodeURIComponent(account.id) +
+                "&from=" +
+                dateValue(from) +
+                "&to=" +
+                dateValue(today)
+              }
+              key={account.id}
+            >
+              Download 90 days · {account.displayName}
+            </a>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

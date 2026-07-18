@@ -1,6 +1,8 @@
 import { AppError } from "@/lib/errors";
 import { getEnv } from "@/lib/env";
 import { minorToDecimal } from "@/lib/money";
+import { parseJsonText } from "@/lib/http";
+import { providerFetch } from "@/lib/payments/http";
 
 type PayPalOrderResponse = {
   id: string;
@@ -27,7 +29,7 @@ async function paypalAccessToken(): Promise<string> {
   const credentials = Buffer.from(
     environment.PAYPAL_CLIENT_ID + ":" + environment.PAYPAL_CLIENT_SECRET,
   ).toString("base64");
-  const response = await fetch(paypalBaseUrl() + "/v1/oauth2/token", {
+  const response = await providerFetch(paypalBaseUrl() + "/v1/oauth2/token", {
     method: "POST",
     headers: {
       Authorization: "Basic " + credentials,
@@ -55,7 +57,7 @@ export async function createPayPalOrder(input: {
 }): Promise<{ orderId: string; approvalUrl: string }> {
   const token = await paypalAccessToken();
   const appUrl = getEnv().NEXT_PUBLIC_APP_URL;
-  const response = await fetch(paypalBaseUrl() + "/v2/checkout/orders", {
+  const response = await providerFetch(paypalBaseUrl() + "/v2/checkout/orders", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + token,
@@ -108,7 +110,7 @@ export async function capturePayPalOrder(orderId: string): Promise<{
   status: string;
 }> {
   const token = await paypalAccessToken();
-  const response = await fetch(
+  const response = await providerFetch(
     paypalBaseUrl() + "/v2/checkout/orders/" + encodeURIComponent(orderId) + "/capture",
     {
       method: "POST",
@@ -127,7 +129,7 @@ export async function capturePayPalOrder(orderId: string): Promise<{
     // A network retry can reach us after PayPal captured the order but before
     // the browser received our response. Read the provider state so that a
     // repeated confirmation is safely idempotent.
-    const existing = await fetch(
+    const existing = await providerFetch(
       paypalBaseUrl() + "/v2/checkout/orders/" + encodeURIComponent(orderId),
       {
         headers: { Authorization: "Bearer " + token },
@@ -167,8 +169,8 @@ export async function verifyPayPalWebhook(input: {
   }
 
   const token = await paypalAccessToken();
-  const webhookEvent = JSON.parse(input.rawPayload) as unknown;
-  const response = await fetch(
+  const webhookEvent = parseJsonText<unknown>(input.rawPayload);
+  const response = await providerFetch(
     paypalBaseUrl() + "/v1/notifications/verify-webhook-signature",
     {
       method: "POST",

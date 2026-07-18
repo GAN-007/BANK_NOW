@@ -14,6 +14,11 @@ export function TransferForm({ accounts }: { accounts: AccountCardData[] }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [recipient, setRecipient] = useState<{
+    accountNumber: string;
+    displayName: string;
+    currency: string;
+  } | null>(null);
   const router = useRouter();
   const source = useMemo(
     () => accounts.find((account) => account.id === sourceAccountId),
@@ -30,12 +35,29 @@ export function TransferForm({ accounts }: { accounts: AccountCardData[] }) {
     setError("");
     setMessage("");
     try {
+      const normalizedAccountNumber = destinationAccountNumber.replace(/\s/g, "");
+      if (!recipient || recipient.accountNumber !== normalizedAccountNumber) {
+        const resolved = await clientRequest<{
+          accountNumber: string;
+          displayName: string;
+          currency: string;
+        }>(
+          "/api/transfers/recipient?sourceAccountId=" +
+            encodeURIComponent(sourceAccountId) +
+            "&accountNumber=" +
+            encodeURIComponent(normalizedAccountNumber),
+        );
+        setRecipient(resolved);
+        setMessage("Recipient verified. Review the name and select Confirm transfer.");
+        return;
+      }
+
       await clientRequest("/api/transfers", {
         method: "POST",
         csrf: true,
         body: {
           sourceAccountId,
-          destinationAccountNumber: destinationAccountNumber.replace(/\s/g, ""),
+          destinationAccountNumber: normalizedAccountNumber,
           amount,
           currency: source.currency,
           memo: memo || undefined,
@@ -45,6 +67,8 @@ export function TransferForm({ accounts }: { accounts: AccountCardData[] }) {
       setMessage("Transfer posted successfully.");
       setAmount("");
       setMemo("");
+      setDestinationAccountNumber("");
+      setRecipient(null);
       router.refresh();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Transfer failed.");
@@ -61,7 +85,13 @@ export function TransferForm({ accounts }: { accounts: AccountCardData[] }) {
       {error && <p className="form-error">{error}</p>}
       <label>
         From
-        <select onChange={(event) => setSourceAccountId(event.target.value)} value={sourceAccountId}>
+        <select
+          onChange={(event) => {
+            setSourceAccountId(event.target.value);
+            setRecipient(null);
+          }}
+          value={sourceAccountId}
+        >
           {accounts.map((account) => (
             <option key={account.id} value={account.id}>
               {account.displayName} · {account.accountNumber}
@@ -71,12 +101,39 @@ export function TransferForm({ accounts }: { accounts: AccountCardData[] }) {
       </label>
       <label>
         Recipient account number
-        <input inputMode="numeric" maxLength={13} minLength={13} onChange={(event) => setDestinationAccountNumber(event.target.value)} placeholder="13-digit BANK NOW account number" required value={destinationAccountNumber} />
+        <input
+          inputMode="numeric"
+          maxLength={13}
+          minLength={13}
+          onChange={(event) => {
+            setDestinationAccountNumber(event.target.value);
+            setRecipient(null);
+          }}
+          placeholder="13-digit BANK NOW account number"
+          required
+          value={destinationAccountNumber}
+        />
       </label>
+      {recipient && (
+        <div className="notice" role="status">
+          <strong>Confirm recipient: {recipient.displayName}</strong>
+          <br />
+          <span>{recipient.accountNumber} · {recipient.currency}</span>
+        </div>
+      )}
       <div className="form-grid">
         <label>
           Amount
-          <input inputMode="decimal" onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required value={amount} />
+          <input
+            inputMode="decimal"
+            onChange={(event) => {
+              setAmount(event.target.value);
+              setRecipient(null);
+            }}
+            placeholder="0.00"
+            required
+            value={amount}
+          />
         </label>
         <label>
           Currency
@@ -85,10 +142,24 @@ export function TransferForm({ accounts }: { accounts: AccountCardData[] }) {
       </div>
       <label>
         Reference note
-        <input maxLength={140} onChange={(event) => setMemo(event.target.value)} placeholder="Optional note" value={memo} />
+        <input
+          maxLength={140}
+          onChange={(event) => {
+            setMemo(event.target.value);
+            setRecipient(null);
+          }}
+          placeholder="Optional note"
+          value={memo}
+        />
       </label>
       <button className="primary-button" disabled={busy || accounts.length === 0} type="submit">
-        {busy ? "Posting transfer..." : "Send securely"}
+        {busy
+          ? recipient
+            ? "Posting transfer..."
+            : "Verifying recipient..."
+          : recipient
+            ? "Confirm transfer"
+            : "Verify recipient"}
       </button>
     </form>
   );

@@ -11,7 +11,6 @@ type SignInResponse =
   | { mfaRequired: true; challengeToken: string };
 
 type RegistrationResponse = {
-  userId: string;
   developmentVerificationUrl?: string;
 };
 
@@ -60,7 +59,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
         const developmentNote = result.developmentVerificationUrl
           ? " Development link: " + result.developmentVerificationUrl
           : "";
-        setMessage("Account created. Check your e-mail to verify it before sign-in." + developmentNote);
+        setMessage("If registration can proceed, check your e-mail for a verification link." + developmentNote);
         return;
       }
 
@@ -116,7 +115,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
       <p className="muted">
         {mode === "sign-in"
           ? "Use your verified account to view balances and move money."
-          : "Your first wallet is created after you verify your e-mail."}
+          : "Your wallet stays unavailable until you verify your e-mail."}
       </p>
       {message && <p className="notice">{message}</p>}
       {error && <p className="form-error">{error}</p>}

@@ -11,6 +11,7 @@ import { ensureClearingAccount } from "@/lib/accounts";
 import { getDb } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { normalizeCurrency } from "@/lib/money";
+import { assertTransferWithinPolicy } from "@/lib/transaction-policy";
 
 function reference(prefix: string): string {
   return prefix + "-" + randomUUID().replace(/-/g, "").toUpperCase();
@@ -30,6 +31,53 @@ async function lockRows(
     ') ORDER BY "id" FOR UPDATE';
 
   await tx.$executeRawUnsafe(sql, ...identifiers);
+}
+
+function sameTransferRequest(
+  existing: {
+    sourceAccountId: string;
+    destinationAccountId: string;
+    amountMinor: bigint;
+    currency: string;
+    memo: string | null;
+  },
+  input: {
+    sourceAccountId: string;
+    destinationAccountId: string;
+    amountMinor: bigint;
+    currency: string;
+    memo?: string;
+  },
+): boolean {
+  return (
+    existing.sourceAccountId === input.sourceAccountId &&
+    existing.destinationAccountId === input.destinationAccountId &&
+    existing.amountMinor === input.amountMinor &&
+    existing.currency === input.currency &&
+    (existing.memo ?? undefined) === input.memo
+  );
+}
+
+async function serializableWithRetry<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  const maximumAttempts = 3;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      return await getDb().$transaction(operation, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      const retryable =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === "P2034" || error.code === "P2002");
+      if (!retryable || attempt === maximumAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 20));
+    }
+  }
+  throw new Error("Serializable transaction retry loop terminated unexpectedly.");
 }
 
 export async function postInternalTransfer(input: {
@@ -52,7 +100,7 @@ export async function postInternalTransfer(input: {
     throw new AppError("INVALID_DESTINATION", "Choose a different recipient account.", 422);
   }
 
-  return getDb().$transaction(
+  return serializableWithRetry(
     async (tx) => {
       const existing = await tx.transfer.findUnique({
         where: {
@@ -64,6 +112,13 @@ export async function postInternalTransfer(input: {
       });
 
       if (existing) {
+        if (!sameTransferRequest(existing, { ...input, currency })) {
+          throw new AppError(
+            "IDEMPOTENCY_CONFLICT",
+            "This idempotency key was already used for a different transfer.",
+            409,
+          );
+        }
         return {
           id: existing.id,
           status: existing.status,
@@ -105,6 +160,12 @@ export async function postInternalTransfer(input: {
       if (sourceAccount.currency !== currency || destinationAccount.currency !== currency) {
         throw new AppError("CURRENCY_MISMATCH", "Transfers require accounts in the same currency.", 422);
       }
+
+      await assertTransferWithinPolicy(tx, {
+        userId: input.initiatorId,
+        currency,
+        amountMinor: input.amountMinor,
+      });
 
       if (sourceAccount.availableBalanceMinor < input.amountMinor) {
         throw new AppError("INSUFFICIENT_FUNDS", "Your available balance is too low for this transfer.", 409);
@@ -175,17 +236,17 @@ export async function postInternalTransfer(input: {
       });
 
       const postedAt = new Date();
-      const postedTransfer = await tx.transfer.update({
-        where: { id: transfer.id },
-        data: {
-          status: TransferStatus.POSTED,
-          postedAt,
-        },
-      });
       await tx.journal.update({
         where: { id: journal.id },
         data: {
           status: JournalStatus.POSTED,
+          postedAt,
+        },
+      });
+      const postedTransfer = await tx.transfer.update({
+        where: { id: transfer.id },
+        data: {
+          status: TransferStatus.POSTED,
           postedAt,
         },
       });
@@ -214,17 +275,22 @@ export async function postInternalTransfer(input: {
         createdAt: postedTransfer.createdAt,
       };
     },
-    {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    },
   );
 }
 
 export async function settleFundingIntent(input: {
   paymentIntentId: string;
-  providerReference?: string;
-}): Promise<{ paymentIntentId: string; alreadySettled: boolean }> {
-  return getDb().$transaction(
+  settlementReference: string;
+  allowManualReview?: boolean;
+  allowExpired?: boolean;
+  actorId?: string;
+  reviewId?: string;
+}): Promise<{
+  paymentIntentId: string;
+  alreadySettled: boolean;
+  manualReview: boolean;
+}> {
+  return serializableWithRetry(
     async (tx) => {
       await lockRows(tx, "PaymentIntent", [input.paymentIntentId]);
       const intent = await tx.paymentIntent.findUnique({
@@ -236,10 +302,64 @@ export async function settleFundingIntent(input: {
       }
 
       if (intent.status === "SUCCEEDED") {
-        return { paymentIntentId: intent.id, alreadySettled: true };
+        if (
+          input.settlementReference &&
+          intent.settlementReference &&
+          input.settlementReference !== intent.settlementReference
+        ) {
+          throw new AppError(
+            "SETTLEMENT_REFERENCE_CONFLICT",
+            "This payment was already settled with a different reference.",
+            409,
+          );
+        }
+        return {
+          paymentIntentId: intent.id,
+          alreadySettled: true,
+          manualReview: false,
+        };
       }
 
-      if (["CANCELLED", "EXPIRED", "FAILED"].includes(intent.status)) {
+      const expired = Boolean(intent.expiresAt && intent.expiresAt <= new Date());
+      if (expired && !input.allowExpired) {
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: "MANUAL_REVIEW",
+            failureCode: "LATE_SETTLEMENT_EVIDENCE",
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            action: "PAYMENT_LATE_SETTLEMENT_REVIEW",
+            resource: "PaymentIntent",
+            resourceId: intent.id,
+            outcome: "DENIED",
+            metadata: {
+              provider: intent.provider,
+              userId: intent.userId,
+            },
+          },
+        });
+        return {
+          paymentIntentId: intent.id,
+          alreadySettled: false,
+          manualReview: true,
+        };
+      }
+
+      if (intent.status === "MANUAL_REVIEW" && !input.allowManualReview) {
+        return {
+          paymentIntentId: intent.id,
+          alreadySettled: false,
+          manualReview: true,
+        };
+      }
+
+      if (
+        ["CANCELLED", "FAILED", "CREATED"].includes(intent.status) ||
+        (intent.status === "EXPIRED" && !input.allowExpired)
+      ) {
         throw new AppError("PAYMENT_NOT_SETTLEABLE", "This payment cannot be settled.", 409);
       }
 
@@ -258,7 +378,7 @@ export async function settleFundingIntent(input: {
           status: JournalStatus.PENDING,
           narration: "Confirmed " + intent.method + " funding",
           currency: intent.currency,
-          externalReference: input.providerReference,
+          externalReference: intent.provider + ":" + input.settlementReference,
           metadata: {
             operation: "funding_settlement",
             paymentIntentId: intent.id,
@@ -318,29 +438,33 @@ export async function settleFundingIntent(input: {
         data: {
           status: "SUCCEEDED",
           journalId: journal.id,
-          providerReference: input.providerReference ?? intent.providerReference,
+          settlementReference: input.settlementReference,
           completedAt,
+          failureCode: null,
         },
       });
       await tx.auditLog.create({
         data: {
-          actorId: intent.userId,
+          actorId: input.actorId,
           action: "PAYMENT_SETTLED",
           resource: "PaymentIntent",
           resourceId: intent.id,
           outcome: "SUCCESS",
           metadata: {
             provider: intent.provider,
+            userId: intent.userId,
+            settlementReviewId: input.reviewId ?? null,
             amountMinor: intent.amountMinor.toString(),
             currency: intent.currency,
           },
         },
       });
 
-      return { paymentIntentId: intent.id, alreadySettled: false };
-    },
-    {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      return {
+        paymentIntentId: intent.id,
+        alreadySettled: false,
+        manualReview: false,
+      };
     },
   );
 }

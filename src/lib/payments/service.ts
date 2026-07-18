@@ -1,14 +1,19 @@
 import {
   PaymentIntentStatus,
   PaymentMethod,
+  Prisma,
   Provider,
 } from "@/generated/prisma/client";
 import { getOwnedActiveAccount } from "@/lib/accounts";
 import { getDb } from "@/lib/db";
 import { AppError, isAppError } from "@/lib/errors";
 import { getEnv } from "@/lib/env";
+import { hashValue } from "@/lib/crypto";
 import { parseMinorAmount, serializeMinor } from "@/lib/money";
-import { initiateMpesaStkPush } from "@/lib/payments/mpesa";
+import {
+  initiateMpesaStkPush,
+  normalizeMpesaPhoneNumber,
+} from "@/lib/payments/mpesa";
 import { createPayPalOrder } from "@/lib/payments/paypal";
 import { createStripeCheckout } from "@/lib/payments/stripe";
 import {
@@ -66,6 +71,27 @@ function existingInstruction(intent: {
   providerReference: string | null;
   checkoutUrl: string | null;
 }): FundingInstruction {
+  if (intent.status === PaymentIntentStatus.CREATED) {
+    throw new AppError(
+      "PAYMENT_INITIALIZING",
+      "This payment is still being initialized. Retry the same request shortly.",
+      409,
+    );
+  }
+
+  if (
+    intent.status === PaymentIntentStatus.FAILED ||
+    intent.status === PaymentIntentStatus.CANCELLED ||
+    intent.status === PaymentIntentStatus.EXPIRED ||
+    intent.status === PaymentIntentStatus.MANUAL_REVIEW
+  ) {
+    throw new AppError(
+      "PAYMENT_NOT_RESUMABLE",
+      "This payment cannot be resumed automatically. Contact support if money left your account.",
+      409,
+    );
+  }
+
   if (intent.method === PaymentMethod.BANK_TRANSFER) {
     return bankTransferInstruction({
       paymentIntentId: intent.id,
@@ -100,6 +126,57 @@ function existingInstruction(intent: {
   );
 }
 
+function fundingRequestHash(input: {
+  accountId: string;
+  amountMinor: bigint;
+  currency: string;
+  method: PaymentMethod;
+  phoneNumber?: string;
+}): string {
+  return hashValue(
+    JSON.stringify([
+      "funding-intent-v1",
+      input.accountId,
+      input.amountMinor.toString(),
+      input.currency,
+      input.method,
+      input.phoneNumber ?? null,
+    ]),
+  );
+}
+
+function assertSameFundingRequest(
+  existing: {
+    accountId: string;
+    amountMinor: bigint;
+    currency: string;
+    method: PaymentMethod;
+    requestHash: string | null;
+  },
+  requestHash: string,
+  observableRequest: {
+    accountId: string;
+    amountMinor: bigint;
+    currency: string;
+    method: PaymentMethod;
+  },
+): void {
+  const matches = existing.requestHash
+    ? existing.requestHash === requestHash
+    : existing.accountId === observableRequest.accountId &&
+      existing.amountMinor === observableRequest.amountMinor &&
+      existing.currency === observableRequest.currency &&
+      existing.method === observableRequest.method;
+
+  if (!matches) {
+    throw new AppError(
+      "IDEMPOTENCY_CONFLICT",
+      "This idempotency key was already used for a different payment request.",
+      409,
+    );
+  }
+}
+
 export async function createFundingIntent(
   user: { id: string; email: string },
   request: NewFundingRequest,
@@ -110,6 +187,17 @@ export async function createFundingIntent(
     currency: request.currency,
   });
   const amountMinor = parseMinorAmount(request.amount, account.currency);
+  const phoneNumber =
+    request.method === PaymentMethod.MPESA
+      ? normalizeMpesaPhoneNumber(request.phoneNumber ?? "")
+      : undefined;
+  const requestHash = fundingRequestHash({
+    accountId: account.id,
+    amountMinor,
+    currency: account.currency,
+    method: request.method,
+    phoneNumber,
+  });
   const existing = await getDb().paymentIntent.findUnique({
     where: {
       userId_idempotencyKey: {
@@ -120,33 +208,64 @@ export async function createFundingIntent(
   });
 
   if (existing) {
+    assertSameFundingRequest(existing, requestHash, {
+      accountId: account.id,
+      amountMinor,
+      currency: account.currency,
+      method: request.method,
+    });
     return existingInstruction(existing);
   }
 
-  const intent = await getDb().paymentIntent.create({
-    data: {
-      userId: user.id,
-      accountId: account.id,
-      provider: providerFor(request.method),
-      method: request.method,
-      idempotencyKey: request.idempotencyKey,
-      amountMinor,
-      currency: account.currency,
-      status: PaymentIntentStatus.CREATED,
-      expiresAt: new Date(Date.now() + 1000 * 60 * 30),
-    },
-  });
+  let intent;
+  try {
+    intent = await getDb().paymentIntent.create({
+      data: {
+        userId: user.id,
+        accountId: account.id,
+        provider: providerFor(request.method),
+        method: request.method,
+        idempotencyKey: request.idempotencyKey,
+        requestHash,
+        amountMinor,
+        currency: account.currency,
+        status: PaymentIntentStatus.CREATED,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 30),
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const raced = await getDb().paymentIntent.findUnique({
+        where: {
+          userId_idempotencyKey: {
+            userId: user.id,
+            idempotencyKey: request.idempotencyKey,
+          },
+        },
+      });
+      if (raced) {
+        assertSameFundingRequest(raced, requestHash, {
+          accountId: account.id,
+          amountMinor,
+          currency: account.currency,
+          method: request.method,
+        });
+        return existingInstruction(raced);
+      }
+    }
+    throw error;
+  }
 
   try {
     if (request.method === PaymentMethod.MPESA) {
-      if (!request.phoneNumber) {
-        throw new AppError("MPESA_PHONE_REQUIRED", "Enter the phone number to receive the M-Pesa prompt.", 422);
-      }
       const response = await initiateMpesaStkPush({
         paymentIntentId: intent.id,
         amountMinor,
         currency: account.currency,
-        phoneNumber: request.phoneNumber,
+        phoneNumber: phoneNumber!,
       });
       await getDb().paymentIntent.update({
         where: { id: intent.id },
@@ -257,7 +376,11 @@ export async function markFundingIntentFailed(input: {
       provider: input.provider,
       providerReference: input.providerReference,
       status: {
-        not: PaymentIntentStatus.SUCCEEDED,
+        in: [
+          PaymentIntentStatus.CREATED,
+          PaymentIntentStatus.REQUIRES_ACTION,
+          PaymentIntentStatus.PENDING,
+        ],
       },
     },
     data: {

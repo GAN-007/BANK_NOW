@@ -10,6 +10,11 @@ const environmentSchema = z.object({
   FIELD_ENCRYPTION_KEY: z.string().min(40),
   APP_NAME: z.string().min(1).default("BANK NOW"),
   DEFAULT_CURRENCY: z.string().length(3).default("KES"),
+  SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(1_440).default(30),
+  SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(2_160).default(720),
+  PROVIDER_HTTP_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  OPERATIONS_SECRET: optionalString,
   RESEND_API_KEY: optionalString,
   EMAIL_FROM: z.string().min(3).default("Bank Now <no-reply@example.com>"),
   STRIPE_SECRET_KEY: optionalString,
@@ -59,6 +64,31 @@ export function getEnv(): AppEnvironment {
 
   if (parsed.data.NODE_ENV === "production" && !parsed.data.RESEND_API_KEY) {
     throw new Error("RESEND_API_KEY is required in production.");
+  }
+
+  if (
+    parsed.data.NODE_ENV === "production" &&
+    process.env.TRUSTED_PROXY_HOPS === undefined
+  ) {
+    throw new Error("TRUSTED_PROXY_HOPS must be explicitly configured in production.");
+  }
+
+  if (
+    parsed.data.NODE_ENV === "production" &&
+    (process.env.SESSION_IDLE_MINUTES === undefined ||
+      process.env.SESSION_ABSOLUTE_HOURS === undefined ||
+      process.env.PROVIDER_HTTP_TIMEOUT_MS === undefined)
+  ) {
+    throw new Error(
+      "Session lifetimes and PROVIDER_HTTP_TIMEOUT_MS must be explicitly configured in production.",
+    );
+  }
+
+  if (
+    parsed.data.NODE_ENV === "production" &&
+    (!parsed.data.OPERATIONS_SECRET || parsed.data.OPERATIONS_SECRET.length < 32)
+  ) {
+    throw new Error("OPERATIONS_SECRET must contain at least 32 characters in production.");
   }
 
   environment = parsed.data;

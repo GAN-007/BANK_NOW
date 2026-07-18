@@ -12,7 +12,10 @@ function stripeClient(): Stripe {
       503,
     );
   }
-  return new Stripe(key);
+  return new Stripe(key, {
+    maxNetworkRetries: 2,
+    timeout: getEnv().PROVIDER_HTTP_TIMEOUT_MS,
+  });
 }
 
 export async function createStripeCheckout(input: {
