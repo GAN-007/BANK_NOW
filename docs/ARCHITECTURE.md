@@ -62,6 +62,7 @@ Customers can request an identity-review state without uploading documents to th
 - `GET /api/admin/reconciliation` is finance/platform-only and compares posted debit/credit totals plus every stored account projection with its calculated natural ledger balance.
 - `GET|PUT /api/admin/transaction-policies` is role-gated; policy changes are audited and missing/disabled policies stop transfers.
 - Manual settlements persist encrypted evidence and require two distinct finance/platform identities. Approval and exactly-once execution are separately audited.
+- `/operations` is a server- and API-role-gated staff console. Finance roles operate settlement/reconciliation queues, platform administrators set policies, and compliance/platform roles view and decide paginated KYC queues. Verified KYC decisions require an approved workflow and external evidence reference.
 - `GET /api/statements` creates a bounded, non-cached, formula-safe CSV from posted entries and audits the export.
 
 ## Mobile/PWA behavior

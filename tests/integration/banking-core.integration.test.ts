@@ -25,6 +25,7 @@ import {
   approveSettlementReview,
   requestSettlementReview,
 } from "@/lib/operations/settlement-review";
+import { decideKycReview } from "@/lib/operations/kyc-review";
 import {
   beginWebhook,
   completeWebhook,
@@ -96,6 +97,21 @@ async function createFinanceOperator(label: string) {
       lastName: "Operator",
       passwordHash: "integration-test-hash",
       role: UserRole.FINANCE_ADMIN,
+      status: UserStatus.ACTIVE,
+      kycStatus: KycStatus.VERIFIED,
+      emailVerifiedAt: new Date(),
+    },
+  });
+}
+
+async function createComplianceOperator(label: string) {
+  return getDb().user.create({
+    data: {
+      email: label + "-" + randomUUID() + "@banknow.test",
+      firstName: label,
+      lastName: "Compliance",
+      passwordHash: "integration-test-hash",
+      role: UserRole.COMPLIANCE,
       status: UserStatus.ACTIVE,
       kycStatus: KycStatus.VERIFIED,
       emailVerifiedAt: new Date(),
@@ -414,5 +430,57 @@ describe("banking core database boundaries", () => {
       actorId: checker.id,
     });
     expect(retry.status).toBe("EXECUTED");
+  });
+
+  it("commits only one concurrent KYC decision for the same case version", async () => {
+    const customer = await createCustomer("KycDecision");
+    const reviewerOne = await createComplianceOperator("ReviewerOne");
+    const reviewerTwo = await createComplianceOperator("ReviewerTwo");
+    const submittedAt = new Date();
+    await getDb().$transaction([
+      getDb().user.update({
+        where: { id: customer.user.id },
+        data: { kycStatus: KycStatus.PENDING },
+      }),
+      getDb().kycProfile.create({
+        data: {
+          userId: customer.user.id,
+          status: KycStatus.PENDING,
+          submittedAt,
+        },
+      }),
+    ]);
+
+    const outcomes = await Promise.allSettled([
+      decideKycReview({
+        actorId: reviewerOne.id,
+        userId: customer.user.id,
+        status: KycStatus.VERIFIED,
+        provider: "Approved provider",
+        providerReference: "KYC-" + randomUUID(),
+      }),
+      decideKycReview({
+        actorId: reviewerTwo.id,
+        userId: customer.user.id,
+        status: KycStatus.REJECTED,
+        rejectionReason: "External identity evidence did not match.",
+      }),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+
+    const decisions = await getDb().auditLog.count({
+      where: {
+        action: "KYC_DECISION",
+        resourceId: customer.user.id,
+      },
+    });
+    expect(decisions).toBe(1);
+    const decided = await getDb().user.findUniqueOrThrow({
+      where: { id: customer.user.id },
+    });
+    expect([KycStatus.VERIFIED, KycStatus.REJECTED]).toContain(
+      decided.kycStatus,
+    );
   });
 });

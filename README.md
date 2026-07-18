@@ -13,7 +13,7 @@ It is an engineering foundation, **not a licensed bank or a production payment s
 | Funding | M-Pesa STK Push, bank-transfer instruction and finance reconciliation, Stripe Checkout, and PayPal Orders/capture. A balance is credited only from a verified callback or authorized finance settlement. |
 | Controls | RBAC for customer, support, compliance, finance, and platform administration; encrypted provider payloads/references; audit events; replay-safe/retryable webhooks; one-time MFA; request rate limits; trusted-proxy configuration; CSP and browser security headers. |
 | Mobile delivery | Responsive interface, web app manifest, installable icon, service worker, and an offline shell that never caches private API data. |
-| Operations | Prisma migrations, authenticated maintenance, ledger reconciliation, request correlation IDs, Docker/local PostgreSQL, unit and PostgreSQL concurrency tests, Dependabot, and pinned GitHub Actions CI. |
+| Operations | Role-gated staff console for KYC queues, maker/checker settlement, reconciliation, and transaction policies; authenticated maintenance; request correlation IDs; Docker/local PostgreSQL; unit and PostgreSQL concurrency tests; Dependabot; and pinned GitHub Actions CI. |
 
 Architecture and data-flow details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The complete current-repository and branch audit is in [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md); the original source-repository assessment is in [docs/REFERENCE_REPOSITORY_AUDIT.md](docs/REFERENCE_REPOSITORY_AUDIT.md).
 
@@ -44,12 +44,12 @@ Configure each provider only after its production contract, callback URLs, and w
 - Stripe: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `POST /api/webhooks/stripe`.
 - PayPal: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, and `POST /api/webhooks/paypal`.
 - Safaricom Daraja: M-Pesa credentials, a public HTTPS callback URL, and `MPESA_CALLBACK_SECRET` used by `POST /api/webhooks/mpesa`.
-- Manual/bank settlement: one finance/platform operator proposes encrypted evidence at `POST /api/admin/payment-intents/:id/settle`; a different operator inspects and approves the persisted review before the ledger can post.
+- Manual/bank settlement: one finance/platform operator proposes encrypted evidence at `POST /api/admin/payment-intents/:id/settle`; a different operator inspects and approves the persisted review through the role-gated `/operations` console before the ledger can post.
 - E-mail: `RESEND_API_KEY` and a verified `EMAIL_FROM` domain.
 
 Provider callbacks are deliberately the settlement authority. A return page, browser redirect, or a provider reference alone cannot increase a wallet balance.
 
-Also configure `TRUSTED_PROXY_HOPS` for the exact production proxy topology, explicit idle/absolute session lifetimes, and a separately rotated `OPERATIONS_SECRET`. Transfers fail closed until a `PLATFORM_ADMIN` stores and enables an approved currency policy through `PUT /api/admin/transaction-policies`; no financial limits are assumed by the source code.
+Also configure `TRUSTED_PROXY_HOPS` for the exact production proxy topology, explicit idle/absolute session lifetimes, and a separately rotated `OPERATIONS_SECRET`. Transfers fail closed until a `PLATFORM_ADMIN` stores and enables an approved currency policy through the `/operations` console or `PUT /api/admin/transaction-policies`; no financial limits are assumed by the source code.
 
 ## Useful commands
 

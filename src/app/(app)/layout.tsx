@@ -17,6 +17,7 @@ export default async function ApplicationLayout({
         firstName: session.user.firstName,
         lastName: session.user.lastName,
         email: session.user.email,
+        role: session.user.role,
         emailVerified: Boolean(session.user.emailVerifiedAt),
         kycStatus: session.user.kycStatus,
       }}

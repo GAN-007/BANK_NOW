@@ -25,7 +25,7 @@ Treat non-2xx responses as an incident after bounded scheduler retries. Never pl
 
 ## Ledger reconciliation
 
-An authenticated `FINANCE_ADMIN` or `PLATFORM_ADMIN` calls `GET /api/admin/reconciliation`. A healthy result requires:
+An authenticated `FINANCE_ADMIN` or `PLATFORM_ADMIN` runs the check in `/operations` or calls `GET /api/admin/reconciliation`. A healthy result requires:
 
 - at least two entries on every posted journal;
 - equal debit and credit totals in the journal currency; and
@@ -37,7 +37,7 @@ This internal reconciliation does not match provider payout reports or sponsor-b
 
 ## Transaction policies
 
-Transfers are unavailable until a `PLATFORM_ADMIN` writes an enabled policy through `PUT /api/admin/transaction-policies`. Amounts are integer minor units. Every change is audited. Finance roles may read policies but cannot change them.
+Transfers are unavailable until a `PLATFORM_ADMIN` writes an enabled policy through `/operations` or `PUT /api/admin/transaction-policies`. The console accepts major currency units and sends exact integer minor units. Every change is audited. Finance roles may read policies but cannot change them.
 
 Policy values must come from approved product, risk, compliance, liquidity, and partner decisions. Review policy changes under dual control outside this application; the implemented maker/checker workflow currently protects manual settlement, not policy edits.
 
@@ -47,10 +47,14 @@ Manual settlement is never a one-call balance credit:
 
 1. A finance/platform operator posts an idempotent review request to `POST /api/admin/payment-intents/:id/settle` with the external settlement reference, evidence-system reference, and a substantive reason.
 2. The evidence-system reference is encrypted; its hash, immutable request identity, requester, and audit event are retained. The payment moves to manual review.
-3. A different finance/platform operator lists reviews at `GET /api/admin/settlement-reviews`, inspects one at `GET /api/admin/settlement-reviews/:id`, and either rejects it or calls `POST /api/admin/settlement-reviews/:id/approve`.
+3. A different finance/platform operator uses `/operations` (or the equivalent role-gated review APIs) to inspect the encrypted evidence reference, independently verify it, and approve/execute or reject the review.
 4. Approval executes the exactly-once settlement and marks the review executed. The requester is database- and application-blocked from approving or rejecting their own review.
 
 The evidence-view action is audited. The workflow proves separation of identities; it does not prove that the external evidence is genuine. Verify it independently against the sponsor bank/provider report and apply organizational approval thresholds.
+
+## KYC review queue
+
+Compliance/platform operators use the paginated `/operations` queue backed by `GET /api/admin/kyc-reviews`. BANK NOW does not accept identity documents in this console. A `VERIFIED` decision requires the approved provider/workflow name and its external evidence reference; the reference is encrypted and the decision is audited. Case-version compare-and-set logic prevents concurrent reviewers from committing two decisions against the same state. The console records an external decision but does not replace vendor certification, sanctions/PEP checks, AML case management, or dual-control requirements selected by the regulated operating model.
 
 ## Webhook incidents
 

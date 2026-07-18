@@ -135,12 +135,26 @@ export const transactionPolicySchema = z
 
 export const kycDecisionSchema = z
   .object({
-    status: z.enum(["PENDING", "MANUAL_REVIEW", "VERIFIED", "REJECTED"]),
+    status: z.enum(["MANUAL_REVIEW", "VERIFIED", "REJECTED"]),
     provider: z.string().trim().min(2).max(64).optional(),
     providerReference: z.string().trim().min(2).max(256).optional(),
     rejectionReason: z.string().trim().min(4).max(500).optional(),
   })
   .superRefine((value, context) => {
+    if (value.status === "VERIFIED" && !value.provider) {
+      context.addIssue({
+        code: "custom",
+        path: ["provider"],
+        message: "The approved verification provider or workflow is required.",
+      });
+    }
+    if (value.status === "VERIFIED" && !value.providerReference) {
+      context.addIssue({
+        code: "custom",
+        path: ["providerReference"],
+        message: "The approved external evidence reference is required.",
+      });
+    }
     if (value.status === "REJECTED" && !value.rejectionReason) {
       context.addIssue({
         code: "custom",

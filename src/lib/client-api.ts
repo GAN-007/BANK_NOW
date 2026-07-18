@@ -44,7 +44,7 @@ function isApiFailure(value: unknown): value is ApiFailure {
 export async function clientRequest<T>(
   path: string,
   options: {
-    method?: "DELETE" | "GET" | "POST";
+    method?: "DELETE" | "GET" | "POST" | "PUT";
     body?: unknown;
     csrf?: boolean;
   } = {},

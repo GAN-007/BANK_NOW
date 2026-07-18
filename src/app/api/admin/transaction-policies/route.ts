@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { requireApiSession, requireRole } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { failure, readJson, success } from "@/lib/http";
-import { serializeMinor } from "@/lib/money";
+import { normalizeCurrency, serializeMinor } from "@/lib/money";
 import { transactionPolicySchema } from "@/lib/validators";
 
 function serializePolicy(policy: {
@@ -45,11 +45,12 @@ export async function PUT(request: NextRequest) {
     const session = await requireApiSession(request, { csrf: true });
     requireRole(session.user, ["PLATFORM_ADMIN"]);
     const input = await readJson(request, transactionPolicySchema);
+    const currency = normalizeCurrency(input.currency);
     const policy = await getDb().$transaction(async (tx) => {
       const saved = await tx.transactionPolicy.upsert({
-        where: { currency: input.currency },
+        where: { currency },
         create: {
-          currency: input.currency,
+          currency,
           enabled: input.enabled,
           maximumAmountMinor: BigInt(input.maximumAmountMinor),
           rolling24HourAmountLimitMinor: BigInt(
@@ -73,10 +74,10 @@ export async function PUT(request: NextRequest) {
           actorId: session.user.id,
           action: "TRANSACTION_POLICY_UPDATED",
           resource: "TransactionPolicy",
-          resourceId: input.currency,
+          resourceId: currency,
           outcome: "SUCCESS",
           metadata: {
-            currency: input.currency,
+            currency,
             enabled: input.enabled,
             maximumAmountMinor: input.maximumAmountMinor,
             rolling24HourAmountLimitMinor:

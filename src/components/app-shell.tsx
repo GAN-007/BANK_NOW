@@ -2,6 +2,7 @@
 
 import {
   ArrowLeftRight,
+  ClipboardCheck,
   LayoutDashboard,
   Landmark,
   LogOut,
@@ -20,6 +21,7 @@ type ShellUser = {
   firstName: string;
   lastName: string;
   email: string;
+  role: string;
   emailVerified: boolean;
   kycStatus: string;
 };
@@ -32,6 +34,12 @@ const navigation = [
   { href: "/security", label: "Security", icon: ShieldCheck },
 ];
 
+const operationsRoles = new Set([
+  "COMPLIANCE",
+  "FINANCE_ADMIN",
+  "PLATFORM_ADMIN",
+]);
+
 export function AppShell({
   user,
   children,
@@ -43,6 +51,12 @@ export function AppShell({
   const [busy, setBusy] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
+  const visibleNavigation = operationsRoles.has(user.role)
+    ? [
+        ...navigation,
+        { href: "/operations", label: "Operations", icon: ClipboardCheck },
+      ]
+    : navigation;
 
   async function signOut() {
     setBusy(true);
@@ -77,7 +91,7 @@ export function AppShell({
           </span>
         </Link>
         <nav aria-label="Primary navigation">
-          {navigation.map((item) => {
+          {visibleNavigation.map((item) => {
             const Icon = item.icon;
             const active = pathname === item.href;
             return (
