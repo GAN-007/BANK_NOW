@@ -163,3 +163,45 @@ export const kycDecisionSchema = z
       });
     }
   });
+
+const isoDateTime = z.iso.datetime({ offset: true }).transform((value) => new Date(value));
+
+export const currencyConfigurationSchema = z
+  .object({
+    code: currency,
+    exponent: z.number().int().min(0).max(6),
+    name: z.string().trim().min(1).max(100),
+    enabled: z.boolean(),
+    settlementEnabled: z.boolean(),
+  })
+  .refine((value) => value.enabled || !value.settlementEnabled, {
+    path: ["settlementEnabled"],
+    message: "Settlement cannot be enabled for a disabled currency.",
+  });
+
+export const glAccountConfigurationSchema = z.object({
+  code: z.string().trim().min(2).max(64).regex(/^[A-Z0-9][A-Z0-9._-]*$/),
+  name: z.string().trim().min(2).max(160),
+  ledgerClass: z.enum(["ASSET", "LIABILITY", "REVENUE", "EXPENSE", "EQUITY"]),
+  currency: currency.optional(),
+  allowManualPosting: z.boolean(),
+  effectiveFrom: isoDateTime,
+  effectiveTo: isoDateTime.optional(),
+});
+
+export const accountingPeriodSchema = z.object({
+  code: z.string().trim().min(2).max(64).regex(/^[A-Z0-9][A-Z0-9._-]*$/),
+  startsAt: isoDateTime,
+  endsAt: isoDateTime,
+});
+
+export const outboxClaimSchema = z.object({
+  workerId: z.string().trim().min(3).max(128),
+  limit: z.number().int().min(1).max(500).default(100),
+  leaseSeconds: z.number().int().min(10).max(900).default(60),
+});
+
+export const outboxCompletionSchema = z.object({
+  workerId: z.string().trim().min(3).max(128),
+  error: z.string().trim().min(1).max(4_000).optional(),
+});

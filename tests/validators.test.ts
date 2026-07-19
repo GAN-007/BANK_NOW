@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { kycDecisionSchema } from "@/lib/validators";
+import {
+  accountingPeriodSchema,
+  currencyConfigurationSchema,
+  glAccountConfigurationSchema,
+  kycDecisionSchema,
+  outboxClaimSchema,
+} from "@/lib/validators";
 
 describe("controlled KYC decisions", () => {
   it("does not let the staff decision endpoint requeue a pending case", () => {
@@ -32,5 +38,39 @@ describe("controlled KYC decisions", () => {
         rejectionReason: "Evidence did not match the account holder.",
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("accounting operations validation", () => {
+  it("rejects settlement for a disabled currency", () => {
+    expect(currencyConfigurationSchema.safeParse({
+      code: "KES",
+      exponent: 2,
+      name: "Kenyan shilling",
+      enabled: false,
+      settlementEnabled: true,
+    }).success).toBe(false);
+  });
+
+  it("accepts bounded GL and accounting-period definitions", () => {
+    expect(glAccountConfigurationSchema.safeParse({
+      code: "2100.CUSTOMER_DEPOSITS",
+      name: "Customer deposits",
+      ledgerClass: "LIABILITY",
+      currency: "kes",
+      allowManualPosting: false,
+      effectiveFrom: "2026-07-01T00:00:00Z",
+    }).success).toBe(true);
+    expect(accountingPeriodSchema.safeParse({
+      code: "2026-07",
+      startsAt: "2026-07-01T00:00:00Z",
+      endsAt: "2026-08-01T00:00:00Z",
+    }).success).toBe(true);
+  });
+
+  it("bounds outbox worker leases and batches", () => {
+    expect(outboxClaimSchema.safeParse({ workerId: "worker-1", limit: 500, leaseSeconds: 900 }).success).toBe(true);
+    expect(outboxClaimSchema.safeParse({ workerId: "worker-1", limit: 501, leaseSeconds: 60 }).success).toBe(false);
+    expect(outboxClaimSchema.safeParse({ workerId: "worker-1", limit: 1, leaseSeconds: 9 }).success).toBe(false);
   });
 });

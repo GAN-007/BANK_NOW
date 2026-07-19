@@ -21,7 +21,7 @@ This repository is deliberately explicit about the work that code cannot complet
 ## Financial integrity readiness
 
 - Approve and configure per-currency limits in `TransactionPolicy`; add customer/risk-tier velocity rules, beneficiary cooling periods, fraud scoring, sanctions screening, and risk-based step-up authentication. The code fails closed when a base currency policy is absent, but it cannot choose the business limits.
-- Schedule the included projection/journal reconciliation and maintenance endpoints. Add ingestion/matching for signed provider settlement reports and sponsor-bank statements, then alert on unmatched or stale funding intents.
+- Schedule the included projection/journal reconciliation and maintenance endpoints. Deploy an independently scaled outbox worker using the authenticated bounded-lease claim/completion endpoints. Add ingestion/matching for signed provider settlement reports and sponsor-bank statements, then alert on unmatched or stale funding intents.
 - Establish controlled reversal/refund/chargeback workflows that post compensating journal entries rather than changing history.
 - Load-test concurrent transfers, provider retries, and webhook ordering with real partner sandboxes.
 - Restrict M-Pesa callbacks at the edge, protect the callback secret from proxy/application logs, and independently reconcile callback outcomes with Safaricom settlement/status reports.
