@@ -15,6 +15,12 @@ import {
 } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
 import { postInternalTransfer, settleFundingIntent } from "@/lib/domain/ledger";
+import {
+  captureFundsHold,
+  createFundsHold,
+  releaseFundsHold,
+  reverseJournal,
+} from "@/lib/domain/accounting-core";
 import { resetEnvironmentForTests } from "@/lib/env";
 import {
   confirmMfaEnrollment,
@@ -42,12 +48,22 @@ async function resetDatabase(): Promise<void> {
   }
   await getDb().$executeRawUnsafe(`
     TRUNCATE TABLE
+      "ReconciliationItem", "ReconciliationRun", "FxTrade", "FxQuote", "Accrual", "PricingRule",
+      "InboxMessage", "OutboxMessage", "PaymentInstruction", "FundsHoldCapture", "FundsHold", "AccountingPeriod", "GlAccount",
       "AuditLog", "ProviderWebhook", "RateLimitBucket", "TransactionPolicy", "SettlementReview",
       "LedgerEntry", "Transfer", "PaymentIntent", "Journal", "Account",
       "MfaRecoveryCode", "MfaChallenge", "MfaFactor", "Session",
       "PasswordResetToken", "EmailVerificationToken", "KycProfile", "User"
     RESTART IDENTITY CASCADE
   `);
+  const now = new Date();
+  await getDb().accountingPeriod.create({
+    data: {
+      code: "TEST-" + randomUUID(),
+      startsAt: new Date(now.getTime() - 86_400_000),
+      endsAt: new Date(now.getTime() + 86_400_000),
+    },
+  });
 }
 
 async function createCustomer(label: string) {
@@ -160,6 +176,48 @@ afterAll(async () => {
 });
 
 describe("banking core database boundaries", () => {
+  it("authorizes, partially captures, idempotently retries, and releases a funds hold", async () => {
+    const source = await createCustomer("HoldSource");
+    const merchant = await createCustomer("HoldMerchant");
+    await fundAccount(source.user.id, source.account.id, 20_000n);
+    const hold = await createFundsHold({ accountId: source.account.id, amountMinor: 12_000n, currency: "KES", externalReference: "AUTH-" + randomUUID(), idempotencyKey: randomUUID(), expiresAt: new Date(Date.now() + 60_000) });
+    const captureKey = randomUUID();
+    await captureFundsHold({ holdId: hold.id, destinationAccountId: merchant.account.id, amountMinor: 5_000n, idempotencyKey: captureKey });
+    await captureFundsHold({ holdId: hold.id, destinationAccountId: merchant.account.id, amountMinor: 5_000n, idempotencyKey: captureKey });
+    await releaseFundsHold({ holdId: hold.id, reason: "Authorization completed" });
+    const [sourceAfter, merchantAfter, captures] = await Promise.all([
+      getDb().account.findUniqueOrThrow({ where: { id: source.account.id } }),
+      getDb().account.findUniqueOrThrow({ where: { id: merchant.account.id } }),
+      getDb().fundsHoldCapture.count({ where: { holdId: hold.id } }),
+    ]);
+    expect(sourceAfter.heldBalanceMinor).toBe(0n);
+    expect(sourceAfter.availableBalanceMinor).toBe(15_000n);
+    expect(sourceAfter.ledgerBalanceMinor).toBe(15_000n);
+    expect(merchantAfter.ledgerBalanceMinor).toBe(5_000n);
+    expect(captures).toBe(1);
+  });
+
+  it("posts one compensating journal and restores transfer balances", async () => {
+    const source = await createCustomer("ReverseSource");
+    const destination = await createCustomer("ReverseDestination");
+    const operator = await createFinanceOperator("ReversalOperator");
+    await enableTransferPolicy();
+    await fundAccount(source.user.id, source.account.id, 20_000n);
+    const transfer = await postInternalTransfer({ initiatorId: source.user.id, sourceAccountId: source.account.id, destinationAccountId: destination.account.id, amountMinor: 7_000n, currency: "KES", idempotencyKey: randomUUID() });
+    const persisted = await getDb().transfer.findUniqueOrThrow({ where: { id: transfer.id } });
+    const first = await reverseJournal({ journalId: persisted.journalId, actorId: operator.id, reason: "Confirmed duplicate customer transfer" });
+    const retry = await reverseJournal({ journalId: persisted.journalId, actorId: operator.id, reason: "Confirmed duplicate customer transfer" });
+    expect(retry.id).toBe(first.id);
+    const [sourceAfter, destinationAfter, reversed] = await Promise.all([
+      getDb().account.findUniqueOrThrow({ where: { id: source.account.id } }),
+      getDb().account.findUniqueOrThrow({ where: { id: destination.account.id } }),
+      getDb().transfer.findUniqueOrThrow({ where: { id: transfer.id } }),
+    ]);
+    expect(sourceAfter.ledgerBalanceMinor).toBe(20_000n);
+    expect(destinationAfter.ledgerBalanceMinor).toBe(0n);
+    expect(reversed.status).toBe("REVERSED");
+  });
+
   it("posts an exactly-once balanced transfer and rejects idempotency-key payload changes", async () => {
     const source = await createCustomer("Source");
     const destination = await createCustomer("Destination");
