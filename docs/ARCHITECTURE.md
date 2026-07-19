@@ -1,5 +1,20 @@
 # Architecture
 
+## Prisma-native accounting core
+
+Prisma and PostgreSQL remain the only persistence stack. API money enters as decimal text, is validated against `CurrencyDefinition.exponent`, and becomes `bigint` minor units before a financial transaction begins. `src/lib/domain/accounting-core.ts` owns the extended primitives; existing transfer and funding journals call its open-period guard.
+
+- `GlAccount` governs the chart of accounts and maps posting accounts to their controlling GL.
+- `AccountingPeriod` prevents posting without exactly one effective open period and supports balanced close controls.
+- `FundsHold` and `FundsHoldCapture` separate available, held, and ledger balances with idempotent partial captures and releases.
+- Journal corrections use a unique self-referencing compensating journal; original entries remain immutable.
+- `PaymentInstruction` validates external-rail state transitions. `OutboxMessage` and `InboxMessage` make dispatch and receipt durable, leased, retryable, and payload-bound.
+- `PricingRule` versions fees, taxes, and interest. `Accrual` gives interest calculations an idempotent daily identity.
+- `FxQuote` stores exact rational-rate inputs; `FxTrade` posts separately balanced source- and destination-currency journals against position accounts.
+- `ReconciliationRun` and `ReconciliationItem` retain statement control totals, deterministic matches, and unresolved exceptions.
+
+Database checks enforce positive amounts, currency formats, hold/capture bounds, state timestamps, pricing completeness, lease consistency, FX validity, and reconciliation controls. Existing posting and append-only triggers remain the final accounting boundary.
+
 ## Application shape
 
 ```mermaid

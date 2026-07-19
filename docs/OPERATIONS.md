@@ -1,5 +1,15 @@
 # Operations runbook
 
+## Accounting activation after migration
+
+The ledger fails closed after the extension migration until finance maps posting accounts to governed GL accounts and opens exactly one current accounting period. Currency rows migrate with KES enabled for settlement and USD/EUR/GBP enabled for representation only; settlement enablement must follow approved rail, liquidity, FX, finance, and compliance decisions. JPY and KWD remain disabled to retain zero- and three-decimal metadata without enabling unsupported products.
+
+Period opening/closing, currency changes, GL configuration, pricing activation, reversal authority, reconciliation exceptions, and external-instruction transitions must be exposed only through authenticated finance/platform workflows with separation of duties. Domain services record audit evidence but do not replace organizational approval policy.
+
+Outbox workers claim bounded batches with `FOR UPDATE SKIP LOCKED`, use an unguessable worker identity, and complete only a live owned lease. Alerts must cover backlog age, dead letters, inbox payload conflicts, expired active holds, failed closes, reconciliation aging, and expired active FX quotes.
+
+No provider request runs inside a Prisma ledger transaction. A worker sends committed outbox messages, persists signed provider responses through the inbox boundary, and advances payment instructions only through allowed transitions. `ACCEPTED` never credits settlement; only independently reconciled `SETTLED` evidence may link a posted settlement journal.
+
 This runbook describes the controls implemented by the repository. It does not authorize a production launch or replace the owners/evidence in `PRODUCTION_GATES.md`.
 
 ## Release and migrations

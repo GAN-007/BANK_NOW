@@ -88,6 +88,7 @@ enum PaymentIntentStatus {
   CANCELLED
   EXPIRED
   MANUAL_REVIEW
+  REVERSED
 }
 
 enum Provider {
@@ -115,6 +116,88 @@ enum SettlementReviewStatus {
   APPROVED
   EXECUTED
   REJECTED
+}
+
+enum HoldStatus {
+  ACTIVE
+  PARTIALLY_CAPTURED
+  CAPTURED
+  RELEASED
+  EXPIRED
+}
+
+enum PaymentRail {
+  INTERNAL
+  MPESA
+  PESALINK
+  EFT
+  RTGS
+  SWIFT
+  CARD
+}
+
+enum PaymentInstructionStatus {
+  RECEIVED
+  SCREENING
+  AUTHORIZED
+  FUNDS_HELD
+  SUBMITTED
+  ACCEPTED
+  SETTLED
+  REJECTED
+  RETURNED
+  CANCELLED
+}
+
+enum MessageStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+}
+
+enum AccountingPeriodStatus {
+  OPEN
+  CLOSING
+  CLOSED
+}
+
+enum PricingComponentType {
+  FEE
+  TAX
+  INTEREST
+}
+
+enum PricingCalculationType {
+  FLAT
+  BASIS_POINTS
+}
+
+enum AccrualStatus {
+  PENDING
+  POSTED
+  REVERSED
+}
+
+enum FxQuoteStatus {
+  ACTIVE
+  CONSUMED
+  EXPIRED
+  CANCELLED
+}
+
+enum ReconciliationRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ReconciliationItemStatus {
+  MATCHED
+  UNMATCHED
+  EXCEPTION
+  RESOLVED
 }
 
 model User {
@@ -147,6 +230,7 @@ model User {
   settlementReviewsRejected  SettlementReview[]       @relation("SettlementRejectedBy")
   settlementReviewsRequested SettlementReview[]       @relation("SettlementRequestedBy")
   transfersInitiated         Transfer[]               @relation("TransferInitiator")
+  paymentInstructions        PaymentInstruction[]
 }
 
 model Session {
@@ -241,43 +325,64 @@ model KycProfile {
 }
 
 model Account {
-  id                    String             @id @default(cuid())
-  userId                String?
-  accountNumber         String             @unique
-  displayName           String
-  currency              String             @default("KES")
-  kind                  AccountKind        @default(WALLET)
-  ledgerClass           LedgerAccountClass @default(LIABILITY)
-  status                AccountStatus      @default(ACTIVE)
-  availableBalanceMinor BigInt             @default(0)
-  ledgerBalanceMinor    BigInt             @default(0)
-  isSystem              Boolean            @default(false)
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  user                  User?              @relation(fields: [userId], references: [id], onDelete: Restrict)
-  debitEntries          LedgerEntry[]      @relation("LedgerAccountEntries")
-  paymentIntents        PaymentIntent[]
-  receivedTransfers     Transfer[]         @relation("TransferDestination")
-  sentTransfers         Transfer[]         @relation("TransferSource")
+  id                     String               @id @default(cuid())
+  userId                 String?
+  accountNumber          String               @unique
+  displayName            String
+  currency               String               @default("KES")
+  kind                   AccountKind          @default(WALLET)
+  ledgerClass            LedgerAccountClass   @default(LIABILITY)
+  status                 AccountStatus        @default(ACTIVE)
+  availableBalanceMinor  BigInt               @default(0)
+  ledgerBalanceMinor     BigInt               @default(0)
+  heldBalanceMinor       BigInt               @default(0)
+  glAccountId            String?
+  isSystem               Boolean              @default(false)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  user                   User?                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  debitEntries           LedgerEntry[]        @relation("LedgerAccountEntries")
+  paymentIntents         PaymentIntent[]
+  receivedTransfers      Transfer[]           @relation("TransferDestination")
+  sentTransfers          Transfer[]           @relation("TransferSource")
+  glAccount              GlAccount?           @relation(fields: [glAccountId], references: [id], onDelete: Restrict)
+  holds                  FundsHold[]
+  accruals               Accrual[]
+  paymentInstructions    PaymentInstruction[]
+  fxTradesAsSource       FxTrade[]            @relation("FxSourceAccount")
+  fxTradesAsDestination  FxTrade[]            @relation("FxDestinationAccount")
+  fxSourcePositions      FxTrade[]            @relation("FxSourcePosition")
+  fxDestinationPositions FxTrade[]            @relation("FxDestinationPosition")
 
   @@index([userId, status])
   @@index([currency, kind])
 }
 
 model Journal {
-  id                String         @id @default(cuid())
-  reference         String         @unique
-  status            JournalStatus  @default(PENDING)
-  narration         String
-  currency          String
-  externalReference String?        @unique
-  metadata          Json?
-  createdAt         DateTime       @default(now())
-  postedAt          DateTime?
-  reversedAt        DateTime?
-  entries           LedgerEntry[]
-  paymentIntent     PaymentIntent?
-  transfer          Transfer?
+  id                     String               @id @default(cuid())
+  reference              String               @unique
+  status                 JournalStatus        @default(PENDING)
+  narration              String
+  currency               String
+  externalReference      String?              @unique
+  metadata               Json?
+  createdAt              DateTime             @default(now())
+  postedAt               DateTime?
+  reversedAt             DateTime?
+  accountingPeriodId     String?
+  originalJournalId      String?              @unique
+  entries                LedgerEntry[]
+  paymentIntent          PaymentIntent?
+  transfer               Transfer?
+  accountingPeriod       AccountingPeriod?    @relation(fields: [accountingPeriodId], references: [id], onDelete: Restrict)
+  originalJournal        Journal?             @relation("JournalReversal", fields: [originalJournalId], references: [id], onDelete: Restrict)
+  reversalJournal        Journal?             @relation("JournalReversal")
+  holdCaptures           FundsHoldCapture[]
+  instructionSettlements PaymentInstruction[]
+  accruals               Accrual[]
+  sourceFxTrades         FxTrade[]            @relation("FxSourceJournal")
+  destinationFxTrades    FxTrade[]            @relation("FxDestinationJournal")
+  reconciliationItems    ReconciliationItem[]
 
   @@index([status, createdAt])
 }
@@ -429,6 +534,268 @@ model AuditLog {
 
   @@index([actorId, createdAt])
   @@index([resource, resourceId])
+}
+
+model CurrencyDefinition {
+  code              String   @id
+  exponent          Int
+  name              String
+  enabled           Boolean  @default(false)
+  settlementEnabled Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model GlAccount {
+  id                 String             @id @default(cuid())
+  code               String             @unique
+  name               String
+  ledgerClass        LedgerAccountClass
+  normalDirection    EntryDirection
+  currency           String?
+  allowManualPosting Boolean            @default(false)
+  active             Boolean            @default(true)
+  effectiveFrom      DateTime
+  effectiveTo        DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  accounts           Account[]
+  debitPricingRules  PricingRule[]      @relation("PricingDebitGl")
+  creditPricingRules PricingRule[]      @relation("PricingCreditGl")
+}
+
+model AccountingPeriod {
+  id        String                 @id @default(cuid())
+  code      String                 @unique
+  startsAt  DateTime
+  endsAt    DateTime
+  status    AccountingPeriodStatus @default(OPEN)
+  closedAt  DateTime?
+  closedBy  String?
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  journals  Journal[]
+
+  @@index([status, startsAt, endsAt])
+}
+
+model FundsHold {
+  id                  String              @id @default(cuid())
+  accountId           String
+  externalReference   String
+  idempotencyKey      String
+  requestHash         String
+  amountMinor         BigInt
+  capturedAmountMinor BigInt              @default(0)
+  currency            String
+  status              HoldStatus          @default(ACTIVE)
+  expiresAt           DateTime
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  releasedAt          DateTime?
+  account             Account             @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  captures            FundsHoldCapture[]
+  paymentInstruction  PaymentInstruction?
+
+  @@unique([accountId, idempotencyKey])
+  @@unique([accountId, externalReference])
+  @@index([status, expiresAt])
+}
+
+model FundsHoldCapture {
+  id             String    @id @default(cuid())
+  holdId         String
+  journalId      String    @unique
+  idempotencyKey String
+  amountMinor    BigInt
+  createdAt      DateTime  @default(now())
+  hold           FundsHold @relation(fields: [holdId], references: [id], onDelete: Restrict)
+  journal        Journal   @relation(fields: [journalId], references: [id], onDelete: Restrict)
+
+  @@unique([holdId, idempotencyKey])
+}
+
+model PaymentInstruction {
+  id                  String                   @id @default(cuid())
+  initiatorId         String
+  sourceAccountId     String?
+  rail                PaymentRail
+  status              PaymentInstructionStatus @default(RECEIVED)
+  idempotencyKey      String
+  requestHash         String
+  amountMinor         BigInt
+  currency            String
+  beneficiary         Json
+  providerReference   String?
+  holdId              String?                  @unique
+  settlementJournalId String?
+  failureCode         String?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  settledAt           DateTime?
+  settlementJournal   Journal?                 @relation(fields: [settlementJournalId], references: [id], onDelete: Restrict)
+  initiator           User                     @relation(fields: [initiatorId], references: [id], onDelete: Restrict)
+  sourceAccount       Account?                 @relation(fields: [sourceAccountId], references: [id], onDelete: Restrict)
+  hold                FundsHold?               @relation(fields: [holdId], references: [id], onDelete: Restrict)
+
+  @@unique([initiatorId, idempotencyKey])
+  @@unique([rail, providerReference])
+  @@index([rail, status, createdAt])
+}
+
+model OutboxMessage {
+  id             String        @id @default(cuid())
+  aggregateType  String
+  aggregateId    String
+  eventType      String
+  payload        Json
+  payloadHash    String
+  status         MessageStatus @default(PENDING)
+  attemptCount   Int           @default(0)
+  availableAt    DateTime      @default(now())
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
+  processedAt    DateTime?
+  lastError      String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([aggregateType, aggregateId, eventType, payloadHash])
+  @@index([status, availableAt, leaseExpiresAt])
+}
+
+model InboxMessage {
+  id               String        @id @default(cuid())
+  source           String
+  externalId       String
+  eventType        String
+  payloadHash      String
+  encryptedPayload String?
+  status           MessageStatus @default(PENDING)
+  attemptCount     Int           @default(0)
+  processedAt      DateTime?
+  lastError        String?
+  receivedAt       DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([source, externalId])
+  @@index([status, receivedAt])
+}
+
+model PricingRule {
+  id                String                 @id @default(cuid())
+  code              String
+  version           Int
+  componentType     PricingComponentType
+  calculationType   PricingCalculationType
+  currency          String
+  flatAmountMinor   BigInt?
+  basisPoints       Int?
+  minimumMinor      BigInt?
+  maximumMinor      BigInt?
+  debitGlAccountId  String
+  creditGlAccountId String
+  effectiveFrom     DateTime
+  effectiveTo       DateTime?
+  active            Boolean                @default(false)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  debitGlAccount    GlAccount              @relation("PricingDebitGl", fields: [debitGlAccountId], references: [id], onDelete: Restrict)
+  creditGlAccount   GlAccount              @relation("PricingCreditGl", fields: [creditGlAccountId], references: [id], onDelete: Restrict)
+  accruals          Accrual[]
+
+  @@unique([code, version])
+  @@index([code, active, effectiveFrom])
+}
+
+model Accrual {
+  id            String        @id @default(cuid())
+  accountId     String
+  pricingRuleId String
+  accrualDate   DateTime
+  amountMinor   BigInt
+  currency      String
+  status        AccrualStatus @default(PENDING)
+  journalId     String?       @unique
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  account       Account       @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  journal       Journal?      @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  pricingRule   PricingRule   @relation(fields: [pricingRuleId], references: [id], onDelete: Restrict)
+
+  @@unique([accountId, pricingRuleId, accrualDate])
+  @@index([status, accrualDate])
+}
+
+model FxQuote {
+  id                     String        @id @default(cuid())
+  reference              String        @unique
+  sourceCurrency         String
+  destinationCurrency    String
+  sourceAmountMinor      BigInt
+  destinationAmountMinor BigInt
+  rateNumerator          BigInt
+  rateDenominator        BigInt
+  spreadBasisPoints      Int
+  expiresAt              DateTime
+  status                 FxQuoteStatus @default(ACTIVE)
+  createdAt              DateTime      @default(now())
+  trade                  FxTrade?
+}
+
+model FxTrade {
+  id                           String   @id @default(cuid())
+  quoteId                      String   @unique
+  sourceAccountId              String
+  destinationAccountId         String
+  sourcePositionAccountId      String
+  destinationPositionAccountId String
+  sourceJournalId              String   @unique
+  destinationJournalId         String   @unique
+  executedAt                   DateTime @default(now())
+  quote                        FxQuote  @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  sourceJournal                Journal  @relation("FxSourceJournal", fields: [sourceJournalId], references: [id], onDelete: Restrict)
+  destinationJournal           Journal  @relation("FxDestinationJournal", fields: [destinationJournalId], references: [id], onDelete: Restrict)
+  sourceAccount                Account  @relation("FxSourceAccount", fields: [sourceAccountId], references: [id], onDelete: Restrict)
+  destinationAccount           Account  @relation("FxDestinationAccount", fields: [destinationAccountId], references: [id], onDelete: Restrict)
+  sourcePositionAccount        Account  @relation("FxSourcePosition", fields: [sourcePositionAccountId], references: [id], onDelete: Restrict)
+  destinationPositionAccount   Account  @relation("FxDestinationPosition", fields: [destinationPositionAccountId], references: [id], onDelete: Restrict)
+}
+
+model ReconciliationRun {
+  id                String                  @id @default(cuid())
+  source            String
+  statementDate     DateTime
+  currency          String
+  status            ReconciliationRunStatus @default(RUNNING)
+  controlTotalMinor BigInt
+  itemCount         Int
+  matchedTotalMinor BigInt                  @default(0)
+  completedAt       DateTime?
+  failureReason     String?
+  createdAt         DateTime                @default(now())
+  items             ReconciliationItem[]
+
+  @@unique([source, statementDate, currency])
+}
+
+model ReconciliationItem {
+  id            String                   @id @default(cuid())
+  runId         String
+  externalId    String
+  amountMinor   BigInt
+  currency      String
+  valueDate     DateTime
+  status        ReconciliationItemStatus @default(UNMATCHED)
+  journalId     String?
+  exceptionCode String?
+  resolvedAt    DateTime?
+  resolvedBy    String?
+  run           ReconciliationRun        @relation(fields: [runId], references: [id], onDelete: Restrict)
+  journal       Journal?                 @relation(fields: [journalId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, externalId])
+  @@index([status, valueDate])
 }
 
 model RateLimitBucket {
