@@ -10,6 +10,7 @@ type ApiFailure = {
   error: {
     code: string;
     message: string;
+    requestId?: string;
   };
 };
 
@@ -43,7 +44,7 @@ function isApiFailure(value: unknown): value is ApiFailure {
 export async function clientRequest<T>(
   path: string,
   options: {
-    method?: "DELETE" | "GET" | "POST";
+    method?: "DELETE" | "GET" | "POST" | "PUT";
     body?: unknown;
     csrf?: boolean;
   } = {},
@@ -71,7 +72,10 @@ export async function clientRequest<T>(
     return payload.data;
   }
   if (isApiFailure(payload)) {
-    throw new Error(payload.error.message);
+    const reference = payload.error.requestId
+      ? " Reference: " + payload.error.requestId + "."
+      : "";
+    throw new Error(payload.error.message + reference);
   }
   throw new Error("The server returned an unexpected response.");
 }

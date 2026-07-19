@@ -2,6 +2,8 @@ import { AppError } from "@/lib/errors";
 import { secureEqual } from "@/lib/crypto";
 import { getEnv } from "@/lib/env";
 import { minorToDecimal } from "@/lib/money";
+import { normalizeKenyanPhoneNumber } from "@/lib/phone";
+import { providerFetch } from "@/lib/payments/http";
 
 type MpesaStkResponse = {
   ResponseCode?: string;
@@ -39,16 +41,8 @@ function nairobiTimestamp(now = new Date()): string {
   );
 }
 
-function normalizedPhoneNumber(phoneNumber: string): string {
-  const normalized = phoneNumber.replace(/[\s+()-]/g, "");
-  if (!/^254(7|1)\d{8}$/.test(normalized)) {
-    throw new AppError(
-      "INVALID_MPESA_PHONE",
-      "Use a Kenyan M-Pesa number in 2547XXXXXXXX or 2541XXXXXXXX format.",
-      422,
-    );
-  }
-  return normalized;
+export function normalizeMpesaPhoneNumber(phoneNumber: string): string {
+  return normalizeKenyanPhoneNumber(phoneNumber);
 }
 
 async function mpesaAccessToken(): Promise<string> {
@@ -60,7 +54,7 @@ async function mpesaAccessToken(): Promise<string> {
   const credentials = Buffer.from(
     environment.MPESA_CONSUMER_KEY + ":" + environment.MPESA_CONSUMER_SECRET,
   ).toString("base64");
-  const response = await fetch(
+  const response = await providerFetch(
     mpesaBaseUrl() + "/oauth/v1/generate?grant_type=client_credentials",
     {
       headers: {
@@ -113,7 +107,7 @@ export async function initiateMpesaStkPush(input: {
   const callbackUrl = new URL(environment.MPESA_CALLBACK_URL);
   callbackUrl.searchParams.set("token", environment.MPESA_CALLBACK_SECRET);
 
-  const response = await fetch(mpesaBaseUrl() + "/mpesa/stkpush/v1/processrequest", {
+  const response = await providerFetch(mpesaBaseUrl() + "/mpesa/stkpush/v1/processrequest", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + (await mpesaAccessToken()),
@@ -125,9 +119,9 @@ export async function initiateMpesaStkPush(input: {
       Timestamp: timestamp,
       TransactionType: "CustomerPayBillOnline",
       Amount: decimalAmount,
-      PartyA: normalizedPhoneNumber(input.phoneNumber),
+      PartyA: normalizeMpesaPhoneNumber(input.phoneNumber),
       PartyB: environment.MPESA_SHORTCODE,
-      PhoneNumber: normalizedPhoneNumber(input.phoneNumber),
+      PhoneNumber: normalizeMpesaPhoneNumber(input.phoneNumber),
       CallBackURL: callbackUrl.toString(),
       AccountReference: input.paymentIntentId.slice(-12).toUpperCase(),
       TransactionDesc: "BANK NOW wallet funding",

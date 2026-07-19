@@ -12,7 +12,9 @@ If a credential is found in source control, treat it as compromised: revoke it a
 - Use a managed secret store and distinct keys for development, staging, and production.
 - Apply Prisma migrations through a reviewed deployment job, not automatically from a browser-facing process.
 - Keep provider callbacks authenticated according to the provider (signed Stripe/PayPal events; protected M-Pesa callback endpoint), replay-protected, and externally monitored.
+- Configure `TRUSTED_PROXY_HOPS` to the deployed topology so client identifiers cannot be supplied by an untrusted forwarding header.
+- Keep `OPERATIONS_SECRET` separate from customer sessions and provider credentials; rotate it and restrict the maintenance route at the network edge.
 - Restrict finance and compliance roles with least privilege and review their audit trail.
 - Complete dependency updates and security scans before releases.
 
-The application stores opaque session-token hashes, encrypted confidential provider references/payloads, and integer money values. These controls reduce risk; they do not replace a formal threat model, penetration test, regulatory review, or incident-response program.
+The application stores opaque session-token hashes, encrypted confidential provider references/payloads, and integer money values. Ledger entries are append-only at the database layer and posted journals are balance-checked. These controls reduce risk; they do not replace a formal threat model, penetration test, regulatory review, or incident-response program.

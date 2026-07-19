@@ -14,6 +14,7 @@ type MfaEnrollment = {
 export function MfaPanel() {
   const [enrollment, setEnrollment] = useState<MfaEnrollment | null>(null);
   const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,12 +23,13 @@ export function MfaPanel() {
     setBusy(true);
     setError("");
     try {
-      setEnrollment(
-        await clientRequest<MfaEnrollment>("/api/security/mfa/enrol", {
-          method: "POST",
-          csrf: true,
-        }),
-      );
+      const result = await clientRequest<MfaEnrollment>("/api/security/mfa/enrol", {
+        method: "POST",
+        csrf: true,
+        body: { password },
+      });
+      setEnrollment(result);
+      setPassword("");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not begin MFA setup.");
     } finally {
@@ -62,9 +64,26 @@ export function MfaPanel() {
       {message && <p className="notice">{message}</p>}
       {error && <p className="form-error">{error}</p>}
       {!enrollment ? (
-        <button className="secondary-button" disabled={busy} onClick={start} type="button">
-          {busy ? "Preparing..." : "Set up authenticator"}
-        </button>
+        <div className="page-stack">
+          <label>
+            Confirm your current password
+            <input
+              autoComplete="current-password"
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              type="password"
+              value={password}
+            />
+          </label>
+          <button
+            className="secondary-button"
+            disabled={busy || !password}
+            onClick={start}
+            type="button"
+          >
+            {busy ? "Preparing..." : "Set up or rotate authenticator"}
+          </button>
+        </div>
       ) : (
         <form onSubmit={confirm}>
           <Image alt="Scan this QR code in your authenticator app" className="mfa-qr" height={256} src={enrollment.qrCodeDataUrl} unoptimized width={256} />

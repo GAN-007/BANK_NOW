@@ -9,13 +9,13 @@ It is an engineering foundation, **not a licensed bank or a production payment s
 | Area | Implementation |
 | --- | --- |
 | Customer access | Argon2id password hashing, e-mail verification, HTTP-only opaque sessions, CSRF and same-origin validation, login lockout, password reset, session revocation, and TOTP MFA with recovery codes. |
-| Accounts and money | KES customer wallets, ownership checks, integer minor units, Luhn-style account numbers, immutable journals, balanced ledger entries, idempotent transfers, and serializable account locking. |
+| Accounts and money | KES customer wallets, ownership checks, integer minor units, Luhn-style account numbers, database-enforced append-only/balanced journals, payload-bound idempotency, operator-approved limits, serializable locking/retries, recipient confirmation, and CSV statements. |
 | Funding | M-Pesa STK Push, bank-transfer instruction and finance reconciliation, Stripe Checkout, and PayPal Orders/capture. A balance is credited only from a verified callback or authorized finance settlement. |
-| Controls | RBAC for customer, support, compliance, finance, and platform administration; encrypted provider payloads/references; audit events; provider-webhook deduplication; request rate limits; CSP and browser security headers. |
+| Controls | RBAC for customer, support, compliance, finance, and platform administration; encrypted provider payloads/references; audit events; replay-safe/retryable webhooks; one-time MFA; request rate limits; trusted-proxy configuration; CSP and browser security headers. |
 | Mobile delivery | Responsive interface, web app manifest, installable icon, service worker, and an offline shell that never caches private API data. |
-| Operations | Prisma schema/migration, Docker image, local PostgreSQL compose file, test/lint/type/build scripts, Dependabot, and GitHub Actions CI. |
+| Operations | Role-gated staff console for KYC queues, maker/checker settlement, reconciliation, and transaction policies; authenticated maintenance; request correlation IDs; Docker/local PostgreSQL; unit and PostgreSQL concurrency tests; Dependabot; and pinned GitHub Actions CI. |
 
-Architecture and data-flow details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The source-repository assessment that informed this rebuild is in [docs/REFERENCE_REPOSITORY_AUDIT.md](docs/REFERENCE_REPOSITORY_AUDIT.md).
+Architecture and data-flow details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The complete current-repository and branch audit is in [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md), and the accounting, product-parity, Kenyan-rail, user-permission and market gap analysis is in [docs/BANKING_PRODUCT_GAP_ANALYSIS.md](docs/BANKING_PRODUCT_GAP_ANALYSIS.md); the original source-repository assessment is in [docs/REFERENCE_REPOSITORY_AUDIT.md](docs/REFERENCE_REPOSITORY_AUDIT.md).
 
 ## Run locally
 
@@ -44,10 +44,12 @@ Configure each provider only after its production contract, callback URLs, and w
 - Stripe: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `POST /api/webhooks/stripe`.
 - PayPal: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, and `POST /api/webhooks/paypal`.
 - Safaricom Daraja: M-Pesa credentials, a public HTTPS callback URL, and `MPESA_CALLBACK_SECRET` used by `POST /api/webhooks/mpesa`.
-- Bank transfer: verified partner account instructions and finance users who may call `POST /api/admin/payment-intents/:id/settle`.
+- Manual/bank settlement: one finance/platform operator proposes encrypted evidence at `POST /api/admin/payment-intents/:id/settle`; a different operator inspects and approves the persisted review through the role-gated `/operations` console before the ledger can post.
 - E-mail: `RESEND_API_KEY` and a verified `EMAIL_FROM` domain.
 
 Provider callbacks are deliberately the settlement authority. A return page, browser redirect, or a provider reference alone cannot increase a wallet balance.
+
+Also configure `TRUSTED_PROXY_HOPS` for the exact production proxy topology, explicit idle/absolute session lifetimes, and a separately rotated `OPERATIONS_SECRET`. Transfers fail closed until a `PLATFORM_ADMIN` stores and enables an approved currency policy through the `/operations` console or `PUT /api/admin/transaction-policies`; no financial limits are assumed by the source code.
 
 ## Useful commands
 
@@ -55,20 +57,21 @@ Provider callbacks are deliberately the settlement authority. A return page, bro
 npm run lint
 npm run typecheck
 npm test
+npm run test:integration
 npm run build
 npm run prisma:deploy
 ```
 
-Use `npm run check` for lint, type checking, and unit tests together. The application health endpoint is `GET /api/health`; it reports ready only when PostgreSQL is reachable.
+Use `npm run check` for lint, type checking, and unit tests together. Integration tests deliberately require a migrated PostgreSQL database whose name contains `banknow_test`. The application health endpoint is `GET /api/health`; it reports ready only when PostgreSQL is reachable. Operational endpoints and schedules are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Deploy
 
 1. Provision PostgreSQL with encrypted backups, restricted network access, and a separate application database user.
 2. Set all runtime secrets in your deployment platform and configure the canonical public URL.
-3. Run `npm ci`, `npm run prisma:generate`, `npm run check`, then `npm run prisma:deploy` as a controlled migration step.
+3. Run `npm ci`, `npm run prisma:generate`, `npm run check`, and the PostgreSQL integration suite, then `npm run prisma:deploy` as a controlled migration step.
 4. Build with `docker build -t bank-now .` or your platform equivalent, deploy behind TLS, and confirm `/api/health`.
 5. Register the exact production callback URLs with Stripe, PayPal, Safaricom, and the bank partner. Validate signed Stripe/PayPal events and the M-Pesa callback-secret/status flow before enabling a payment method.
-6. Complete the gates in [docs/PRODUCTION_GATES.md](docs/PRODUCTION_GATES.md).
+6. Configure approved transfer policies, schedule maintenance/reconciliation, and complete every gate in [docs/PRODUCTION_GATES.md](docs/PRODUCTION_GATES.md).
 
 ## Security
 

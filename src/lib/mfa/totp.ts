@@ -28,6 +28,10 @@ function totpFor(secret: Secret, email: string): TOTP {
   });
 }
 
+function timestepForValidation(delta: number, now = Date.now()): bigint {
+  return BigInt(Math.floor(now / 1000 / 30) + delta);
+}
+
 export async function startMfaEnrollment(user: {
   id: string;
   email: string;
@@ -47,6 +51,7 @@ export async function startMfaEnrollment(user: {
         encryptedSecret: encryptField(secret.base32),
         confirmedAt: null,
         lastUsedAt: null,
+        lastUsedTimestep: null,
       },
     });
 
@@ -105,6 +110,7 @@ export async function confirmMfaEnrollment(input: {
     data: {
       confirmedAt: new Date(),
       lastUsedAt: new Date(),
+      lastUsedTimestep: timestepForValidation(result),
     },
   });
 }
@@ -135,11 +141,29 @@ export async function verifyMfaFactor(input: {
     });
 
     if (result !== null) {
-      await getDb().mfaFactor.update({
-        where: { userId: input.userId },
-        data: { lastUsedAt: new Date() },
+      const timestep = timestepForValidation(result);
+      const consumed = await getDb().mfaFactor.updateMany({
+        where: {
+          userId: input.userId,
+          confirmedAt: { not: null },
+          OR: [
+            { lastUsedTimestep: null },
+            { lastUsedTimestep: { lt: timestep } },
+          ],
+        },
+        data: {
+          lastUsedAt: new Date(),
+          lastUsedTimestep: timestep,
+        },
       });
-      return { usedRecoveryCode: false };
+      if (consumed.count === 1) {
+        return { usedRecoveryCode: false };
+      }
+      throw new AppError(
+        "MFA_CODE_REPLAYED",
+        "This authenticator code was already used. Wait for a new code.",
+        409,
+      );
     }
   }
 
@@ -148,11 +172,17 @@ export async function verifyMfaFactor(input: {
   });
 
   if (recovery?.userId === input.userId && !recovery.usedAt) {
-    await getDb().mfaRecoveryCode.update({
-      where: { id: recovery.id },
+    const consumed = await getDb().mfaRecoveryCode.updateMany({
+      where: {
+        id: recovery.id,
+        userId: input.userId,
+        usedAt: null,
+      },
       data: { usedAt: new Date() },
     });
-    return { usedRecoveryCode: true };
+    if (consumed.count === 1) {
+      return { usedRecoveryCode: true };
+    }
   }
 
   throw new AppError("INVALID_MFA_CODE", "The authenticator code is invalid or expired.", 422);

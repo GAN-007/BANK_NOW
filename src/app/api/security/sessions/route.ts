@@ -69,6 +69,15 @@ export async function DELETE(request: NextRequest) {
     if (result.count !== 1) {
       throw new AppError("SESSION_NOT_FOUND", "The selected session was not found.", 404);
     }
+    await getDb().auditLog.create({
+      data: {
+        actorId: session.user.id,
+        action: "SESSION_REVOKED",
+        resource: "Session",
+        resourceId: input.sessionId,
+        outcome: "SUCCESS",
+      },
+    });
     return success({ revoked: true });
   } catch (error) {
     return failure(error);

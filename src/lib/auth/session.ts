@@ -18,7 +18,6 @@ import { getEnv } from "@/lib/env";
 
 export const SESSION_COOKIE_NAME = "bank_now_session";
 export const CSRF_COOKIE_NAME = "bank_now_csrf";
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const LAST_USED_REFRESH_MS = 1000 * 60 * 5;
 
 export type CurrentUser = {
@@ -76,7 +75,9 @@ export async function createSession(input: {
 }): Promise<{ sessionToken: string; csrfToken: string; expiresAt: Date }> {
   const sessionToken = generateOpaqueToken();
   const csrfToken = generateOpaqueToken(32);
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const expiresAt = new Date(
+    Date.now() + getEnv().SESSION_ABSOLUTE_HOURS * 60 * 60 * 1000,
+  );
 
   await getDb().session.create({
     data: {
@@ -131,6 +132,21 @@ export async function getSessionByToken(
   });
 
   if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+    return null;
+  }
+
+  if (
+    Date.now() - session.lastUsedAt.getTime() >
+    getEnv().SESSION_IDLE_MINUTES * 60 * 1000
+  ) {
+    await getDb().session.updateMany({
+      where: { id: session.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return null;
+  }
+
+  if (session.user.status !== "ACTIVE" || !session.user.emailVerifiedAt) {
     return null;
   }
 

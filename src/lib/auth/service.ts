@@ -14,13 +14,15 @@ import {
   verifyPassword,
 } from "@/lib/auth/password";
 import { generateOpaqueToken } from "@/lib/crypto";
-import { AuditOutcome } from "@/generated/prisma/client";
+import { AuditOutcome, Prisma } from "@/generated/prisma/client";
+import { normalizeKenyanPhoneNumber } from "@/lib/phone";
 
 const EMAIL_TOKEN_TTL_MS = 1000 * 60 * 60 * 24;
 const PASSWORD_RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const MFA_CHALLENGE_TTL_MS = 1000 * 60 * 5;
 const MAX_FAILED_LOGINS = 5;
 const LOCK_DURATION_MS = 1000 * 60 * 15;
+const MAX_MFA_ATTEMPTS = 5;
 
 type LoginSession = {
   sessionToken: string;
@@ -139,7 +141,7 @@ export async function registerUser(input: {
   email: string;
   phoneNumber?: string;
   password: string;
-}): Promise<{ userId: string; developmentVerificationUrl?: string }> {
+}): Promise<{ developmentVerificationUrl?: string }> {
   const email = normalizeEmail(input.email);
   const existing = await getDb().user.findUnique({
     where: { email },
@@ -152,41 +154,70 @@ export async function registerUser(input: {
   });
 
   if (existing?.emailVerifiedAt) {
-    throw new AppError("EMAIL_ALREADY_REGISTERED", "An account already exists for this e-mail address.", 409);
+    return {};
   }
 
   if (existing) {
     const verification = await issueEmailVerification(existing);
     return {
-      userId: existing.id,
       developmentVerificationUrl: verification.developmentVerificationUrl,
     };
   }
 
   const passwordHash = await hashPassword(input.password);
-  const user = await getDb().$transaction(async (tx) => {
-    const created = await tx.user.create({
-      data: {
-        firstName: input.firstName.trim(),
-        lastName: input.lastName.trim(),
-        email,
-        phoneNumber: input.phoneNumber?.trim() || undefined,
-        passwordHash,
-      },
-    });
+  const phoneNumber = input.phoneNumber
+    ? normalizeKenyanPhoneNumber(input.phoneNumber)
+    : undefined;
+  let user;
+  try {
+    user = await getDb().$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          firstName: input.firstName.trim(),
+          lastName: input.lastName.trim(),
+          email,
+          phoneNumber,
+          passwordHash,
+        },
+      });
 
-    await tx.kycProfile.create({
-      data: {
-        userId: created.id,
-      },
+      await tx.kycProfile.create({
+        data: {
+          userId: created.id,
+        },
+      });
+      await createCustomerWallet(tx, created);
+      return created;
     });
-    await createCustomerWallet(tx, created);
-    return created;
-  });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const raced = await getDb().user.findUnique({
+        where: { email },
+        select: { id: true, email: true, firstName: true, emailVerifiedAt: true },
+      });
+      if (raced && !raced.emailVerifiedAt) {
+        const verification = await issueEmailVerification(raced);
+        return {
+          developmentVerificationUrl: verification.developmentVerificationUrl,
+        };
+      }
+      if (raced?.emailVerifiedAt) {
+        return {};
+      }
+      throw new AppError(
+        "REGISTRATION_CONFLICT",
+        "The registration could not be completed with those details.",
+        409,
+      );
+    }
+    throw error;
+  }
 
   const verification = await issueEmailVerification(user);
   return {
-    userId: user.id,
     developmentVerificationUrl: verification.developmentVerificationUrl,
   };
 }
@@ -203,6 +234,7 @@ export async function verifyEmail(token: string): Promise<void> {
         userId: true,
         expiresAt: true,
         consumedAt: true,
+        user: { select: { status: true } },
       },
     });
 
@@ -226,7 +258,10 @@ export async function verifyEmail(token: string): Promise<void> {
       where: { id: verification.userId },
       data: {
         emailVerifiedAt: now,
-        status: "ACTIVE",
+        status:
+          verification.user.status === "PENDING_VERIFICATION"
+            ? "ACTIVE"
+            : verification.user.status,
       },
     });
   });
@@ -350,19 +385,36 @@ export async function resetPassword(input: {
   });
 }
 
-async function recordFailedLogin(user: {
-  id: string;
-  failedLoginCount: number;
-}): Promise<void> {
-  const nextFailureCount = user.failedLoginCount + 1;
-  const shouldLock = nextFailureCount >= MAX_FAILED_LOGINS;
-  await getDb().user.update({
-    where: { id: user.id },
-    data: {
-      failedLoginCount: shouldLock ? 0 : nextFailureCount,
-      lockedUntil: shouldLock ? new Date(Date.now() + LOCK_DURATION_MS) : undefined,
-      status: shouldLock ? "LOCKED" : undefined,
-    },
+async function recordFailedLogin(userId: string): Promise<void> {
+  await getDb().$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(
+      'SELECT "id" FROM "User" WHERE "id" = $1 FOR UPDATE',
+      userId,
+    );
+    const current = await tx.user.findUnique({
+      where: { id: userId },
+      select: { failedLoginCount: true, status: true },
+    });
+    if (!current) {
+      return;
+    }
+
+    const nextFailureCount = Math.min(
+      current.failedLoginCount + 1,
+      MAX_FAILED_LOGINS,
+    );
+    const shouldLock =
+      nextFailureCount >= MAX_FAILED_LOGINS && current.status !== "SUSPENDED";
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        failedLoginCount: shouldLock ? 0 : nextFailureCount,
+        lockedUntil: shouldLock
+          ? new Date(Date.now() + LOCK_DURATION_MS)
+          : undefined,
+        status: shouldLock ? "LOCKED" : current.status,
+      },
+    });
   });
 }
 
@@ -394,7 +446,7 @@ export async function beginLogin(input: {
 
   const passwordValid = await verifyPassword(user.passwordHash, input.password);
   if (!passwordValid) {
-    await recordFailedLogin(user);
+    await recordFailedLogin(user.id);
     throw new AppError("INVALID_CREDENTIALS", "Invalid e-mail address or password.", 401);
   }
 
@@ -422,12 +474,18 @@ export async function beginLogin(input: {
 
   if (user.mfaFactor?.confirmedAt) {
     const challengeToken = generateOpaqueToken();
-    await getDb().mfaChallenge.create({
-      data: {
-        userId: user.id,
-        tokenHash: hashOpaqueToken(challengeToken),
-        expiresAt: new Date(Date.now() + MFA_CHALLENGE_TTL_MS),
-      },
+    await getDb().$transaction(async (tx) => {
+      await tx.mfaChallenge.updateMany({
+        where: { userId: user.id, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      await tx.mfaChallenge.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashOpaqueToken(challengeToken),
+          expiresAt: new Date(Date.now() + MFA_CHALLENGE_TTL_MS),
+        },
+      });
     });
     return { mfaRequired: true, challengeToken };
   }
@@ -472,11 +530,38 @@ export async function completeMfaLogin(input: {
     throw new AppError("ACCOUNT_RESTRICTED", "This account is not eligible to sign in.", 403);
   }
 
-  await verifyMfaFactor({
-    userId: challenge.user.id,
-    email: challenge.user.email,
-    code: input.code,
+  const attempt = await getDb().mfaChallenge.updateMany({
+    where: {
+      id: challenge.id,
+      consumedAt: null,
+      expiresAt: { gt: new Date() },
+      attemptCount: { lt: MAX_MFA_ATTEMPTS },
+    },
+    data: { attemptCount: { increment: 1 } },
   });
+  if (attempt.count !== 1) {
+    throw new AppError(
+      "MFA_CHALLENGE_EXHAUSTED",
+      "This sign-in challenge has expired. Start sign-in again.",
+      401,
+    );
+  }
+
+  try {
+    await verifyMfaFactor({
+      userId: challenge.user.id,
+      email: challenge.user.email,
+      code: input.code,
+    });
+  } catch (error) {
+    if (challenge.attemptCount + 1 >= MAX_MFA_ATTEMPTS) {
+      await getDb().mfaChallenge.updateMany({
+        where: { id: challenge.id, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+    }
+    throw error;
+  }
 
   const consumed = await getDb().mfaChallenge.updateMany({
     where: {
