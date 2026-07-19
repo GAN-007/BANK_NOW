@@ -23,11 +23,11 @@ P0 is required for a controlled test-money showcase; P1 is required before a sup
 
 | Priority | Gap | Required invariant |
 | --- | --- | --- |
-| P0 | Chart of accounts | Versioned GL codes, normal balances, product/branch/cost-centre dimensions and controlling-account reconciliation. Changes require maker-checker approval. |
-| P0 | Holds and liens | Authorization, expiry, partial capture and release. Hold reduces available balance only; capture posts once; release cannot create funds. |
-| P0 | Compensating reversals | One immutable reversal link per posted journal. Swap every entry exactly once and atomically update cached balances; never edit original entries. |
-| P0 | External-payment state machine | Separate instruction lifecycle: received, screening, authorized, held, submitted, accepted, settled, rejected, returned or cancelled. Provider acceptance is not settlement. |
-| P0 | Transactional outbox/inbox | Commit messages with business state; leased workers, payload deduplication, bounded retry and dead letters. No provider call inside a ledger transaction. |
+| Implemented foundation | Chart of accounts | Effective-dated GL codes, normal balances, currency scope and posting controls exist. Platform-admin APIs now configure and audit them; product/branch/cost-centre dimensions and dual approval remain gated. |
+| Implemented foundation | Holds and liens | Authorization, expiry, partial capture and release use atomic balance movements and idempotent capture records. They remain internal until a contracted card/payment rail defines authorization semantics. |
+| Implemented foundation | Compensating reversals | A posted journal can be reversed exactly once through immutable linked entries and atomic cached-balance updates. A generic maker-checker request UI remains required before staff exposure. |
+| Implemented foundation | External-payment state machine | Instructions distinguish screening, authorization, holds, submission, acceptance, settlement, rejection, return and cancellation. Provider-specific transitions remain disabled without signed partner contracts. |
+| Implemented foundation | Transactional outbox/inbox | Business state emits deduplicated messages; bearer-authenticated workers now claim bounded leases, retry with backoff and complete or dead-letter work. Provider transports remain separately deployable adapters. |
 | P0 | End-of-day controls | Trial balance, customer-control reconciliation, suspense aging, unmatched statement items, abnormal balances and dual-controlled close/reopen evidence. |
 | P0 | Beneficiary safety | Verified identity/rail details, name enquiry, cooling period, step-up MFA, limits, allow/block state and enumeration-resistant confirmation. |
 | P0 | Fees and taxes | Effective-dated tariffs, pre-authorization quote, revenue/payable postings, reversals and dual-controlled waivers. No hard-coded tax or fee rates. |
@@ -36,7 +36,7 @@ P0 is required for a controlled test-money showcase; P1 is required before a sup
 | P1 | Lending | Decision evidence, consent, schedules, principal/interest/fee GLs, arrears, restructure, collection, impairment and bureau adapters. |
 | P1 | Disputes/returns | Cases, evidence, deadlines, provisional credit, return/chargeback codes, recovery and write-off approval. |
 | P1 | Reconciliation | Signed external statements, source lineage, deterministic matching, exceptions, aging, adjustments under dual control and proof of settlement. |
-| P1 | Period accounting | Period locks, adjusting entries, close, trial balance, balance sheet, income statement, audit export and legal hold. |
+| Implemented foundation | Period accounting | Exactly one open period is enforced for posting; authorized APIs open/list/close periods and retrieve GL trial balances, with audited closing. Adjusting-entry approval, financial statements, audit export and legal hold remain. |
 | P2 | Cards, cash and agents | Certified processors/schemes, PCI/HSM controls, card clearing/disputes; till/vault/agent-float accounting and physical controls. |
 | P2 | Trade, treasury and wealth | Separate regulated domains; these must not be simulated in the retail wallet ledger. |
 
