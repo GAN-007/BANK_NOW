@@ -347,7 +347,9 @@ export async function closeAccountingPeriod(input: { periodId: string; actorId: 
     if (pendingJournals || pendingAccruals) throw new AppError("PERIOD_HAS_PENDING_WORK", "Period has pending journals or accruals.", 409);
     const totals = await tx.$queryRaw<Array<{ debit: bigint; credit: bigint }>>(Prisma.sql`SELECT COALESCE(SUM(e."amountMinor") FILTER (WHERE e."direction"='DEBIT'),0) debit, COALESCE(SUM(e."amountMinor") FILTER (WHERE e."direction"='CREDIT'),0) credit FROM "LedgerEntry" e JOIN "Journal" j ON j."id"=e."journalId" WHERE j."accountingPeriodId"=${period.id} AND j."status"='POSTED'`);
     if (totals[0]?.debit !== totals[0]?.credit) throw new AppError("PERIOD_UNBALANCED", "Period trial balance is not balanced.", 409);
-    return tx.accountingPeriod.update({ where: { id: period.id }, data: { status: "CLOSED", closedAt: new Date(), closedBy: input.actorId } });
+    const closed = await tx.accountingPeriod.update({ where: { id: period.id }, data: { status: "CLOSED", closedAt: new Date(), closedBy: input.actorId } });
+    await tx.auditLog.create({ data: { actorId: input.actorId, action: "ACCOUNTING_PERIOD_CLOSED", resource: "AccountingPeriod", resourceId: period.id, outcome: "SUCCESS", metadata: { code: period.code, debitMinor: totals[0]?.debit.toString() ?? "0", creditMinor: totals[0]?.credit.toString() ?? "0" } } });
+    return closed;
   });
 }
 
