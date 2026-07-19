@@ -15,7 +15,7 @@ It is an engineering foundation, **not a licensed bank or a production payment s
 | Mobile delivery | Responsive interface, web app manifest, installable icon, service worker, and an offline shell that never caches private API data. |
 | Operations | Role-gated staff console for KYC queues, maker/checker settlement, reconciliation, and transaction policies; authenticated maintenance; request correlation IDs; Docker/local PostgreSQL; unit and PostgreSQL concurrency tests; Dependabot; and pinned GitHub Actions CI. |
 
-Architecture and data-flow details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The complete current-repository and branch audit is in [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md); the original source-repository assessment is in [docs/REFERENCE_REPOSITORY_AUDIT.md](docs/REFERENCE_REPOSITORY_AUDIT.md).
+Architecture and data-flow details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The complete current-repository and branch audit is in [docs/REPOSITORY_AUDIT.md](docs/REPOSITORY_AUDIT.md), and the accounting, product-parity, Kenyan-rail, user-permission and market gap analysis is in [docs/BANKING_PRODUCT_GAP_ANALYSIS.md](docs/BANKING_PRODUCT_GAP_ANALYSIS.md); the original source-repository assessment is in [docs/REFERENCE_REPOSITORY_AUDIT.md](docs/REFERENCE_REPOSITORY_AUDIT.md).
 
 ## Run locally
 
