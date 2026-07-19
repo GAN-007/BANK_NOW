@@ -12,6 +12,7 @@ import { getDb } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { normalizeCurrency } from "@/lib/money";
 import { assertTransferWithinPolicy } from "@/lib/transaction-policy";
+import { requireOpenAccountingPeriod } from "@/lib/domain/accounting-core";
 
 function reference(prefix: string): string {
   return prefix + "-" + randomUUID().replace(/-/g, "").toUpperCase();
@@ -201,12 +202,14 @@ export async function postInternalTransfer(input: {
         throw new AppError("INSUFFICIENT_FUNDS", "Your available balance is too low for this transfer.", 409);
       }
 
+      const period = await requireOpenAccountingPeriod(tx);
       const journal = await tx.journal.create({
         data: {
           reference: reference("TRF"),
           status: JournalStatus.PENDING,
           narration: input.memo || "Internal account transfer",
           currency,
+          accountingPeriodId: period.id,
           metadata: {
             operation: "internal_transfer",
           },
@@ -402,12 +405,14 @@ export async function settleFundingIntent(input: {
         throw new AppError("ACCOUNT_RESTRICTED", "The destination account is not active.", 409);
       }
 
+      const period = await requireOpenAccountingPeriod(tx);
       const journal = await tx.journal.create({
         data: {
           reference: reference("FND"),
           status: JournalStatus.PENDING,
           narration: "Confirmed " + intent.method + " funding",
           currency: intent.currency,
+          accountingPeriodId: period.id,
           externalReference: intent.provider + ":" + input.settlementReference,
           metadata: {
             operation: "funding_settlement",
