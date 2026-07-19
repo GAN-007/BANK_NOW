@@ -193,8 +193,9 @@ export async function reverseJournal(input: { journalId: string; actorId: string
   return serializable(async (tx) => {
     await lock(tx, "Journal", [input.journalId]);
     const original = await tx.journal.findUnique({ where: { id: input.journalId }, include: { entries: true, reversalJournal: true, transfer: true, paymentIntent: true } });
-    if (!original || original.status !== JournalStatus.POSTED) throw new AppError("JOURNAL_NOT_REVERSIBLE", "Only a posted journal can be reversed.", 409);
+    if (!original) throw new AppError("JOURNAL_NOT_FOUND", "Journal was not found.", 404);
     if (original.reversalJournal) return original.reversalJournal;
+    if (original.status !== JournalStatus.POSTED) throw new AppError("JOURNAL_NOT_REVERSIBLE", "Only a posted journal can be reversed.", 409);
     await lock(tx, "Account", original.entries.map((entry) => entry.accountId));
     const period = await requireOpenAccountingPeriod(tx);
     const reversal = await tx.journal.create({ data: { reference: reference("REV"), narration: input.reason, currency: original.currency, originalJournalId: original.id, accountingPeriodId: period.id, metadata: { operation: "compensating_reversal", actorId: input.actorId } } });
