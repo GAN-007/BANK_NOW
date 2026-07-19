@@ -473,9 +473,9 @@ ALTER TABLE "ReconciliationItem"
   ADD CONSTRAINT "ReconciliationItem_currency_iso" CHECK ("currency" ~ '^[A-Z]{3}$');
 
 INSERT INTO "CurrencyDefinition" ("code","exponent","name","enabled","settlementEnabled","updatedAt") VALUES
-  ('KES',2,'Kenyan Shilling',true,true),
-  ('USD',2,'United States Dollar',true,false),
-  ('EUR',2,'Euro',true,false),
-  ('GBP',2,'Pound Sterling',true,false),
-  ('JPY',0,'Japanese Yen',false,false),
-  ('KWD',3,'Kuwaiti Dinar',false,false);
+  ('KES',2,'Kenyan Shilling',true,true,CURRENT_TIMESTAMP),
+  ('USD',2,'United States Dollar',true,false,CURRENT_TIMESTAMP),
+  ('EUR',2,'Euro',true,false,CURRENT_TIMESTAMP),
+  ('GBP',2,'Pound Sterling',true,false,CURRENT_TIMESTAMP),
+  ('JPY',0,'Japanese Yen',false,false,CURRENT_TIMESTAMP),
+  ('KWD',3,'Kuwaiti Dinar',false,false,CURRENT_TIMESTAMP);
